@@ -1,0 +1,760 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>🧱 Tower Defense</title>
+<script type="application/json" id="game-help">
+{
+  "goal": "Defend your base from 10 escalating waves of enemies. Build towers along the path, spend your gold wisely and don't let your 20 lives run out.",
+  "controls": [
+    { "keys": "Pick a tower + click", "action": "Place it on a green tile" },
+    { "keys": "▶ Send Wave", "action": "Start the next wave of enemies" },
+    { "keys": "Right-click", "action": "Sell a tower (50% refund)" },
+    { "keys": "Scroll", "action": "Zoom the camera in and out" },
+    { "keys": "Middle-drag", "action": "Rotate the camera" },
+    { "keys": "Arrows / WASD", "action": "Pan the camera" }
+  ],
+  "tips": [
+    "Cannon hits hard but slow; Laser is fast and piercing.",
+    "Freeze slows enemies and Missiles deal splash damage.",
+    "Place towers by path corners so they hit enemies longer.",
+    "Kill enemies to earn gold — spend it before the next wave."
+  ]
+}
+</script>
+<style>
+*{margin:0;padding:0;box-sizing:border-box;}
+body{background:#0d1f0d;overflow:hidden;font-family:'Segoe UI',sans-serif;}
+canvas{display:block;}
+
+#hud{position:fixed;top:0;left:0;right:0;display:flex;justify-content:space-between;align-items:center;padding:12px 20px;background:rgba(0,0,0,0.65);backdrop-filter:blur(10px);border-bottom:1px solid rgba(255,255,255,0.07);pointer-events:none;gap:8px;flex-wrap:wrap;}
+.stat{display:flex;flex-direction:column;align-items:center;}
+.stat-lbl{font-size:9px;letter-spacing:2px;text-transform:uppercase;color:rgba(255,255,255,0.45);}
+.stat-val{font-size:20px;font-weight:800;color:#fff;}
+#gold-v{color:#ffd700;}#lives-v{color:#ff6b6b;}#wave-v{color:#74b9ff;}#score-v{color:#a29bfe;}
+
+#toolbar{position:fixed;bottom:0;left:0;right:0;display:flex;justify-content:center;align-items:center;gap:8px;padding:10px 16px;background:rgba(0,0,0,0.75);backdrop-filter:blur(10px);border-top:1px solid rgba(255,255,255,0.07);flex-wrap:wrap;}
+.tbtn{display:flex;flex-direction:column;align-items:center;gap:2px;border:2px solid rgba(255,255,255,0.1);border-radius:14px;padding:7px 14px;cursor:pointer;background:rgba(255,255,255,0.04);transition:all .15s;color:#fff;min-width:72px;}
+.tbtn:hover{background:rgba(255,255,255,0.12);transform:translateY(-2px);}
+.tbtn.active{border-color:#fff;background:rgba(255,255,255,0.16);transform:translateY(-3px);}
+.tbtn .icon{font-size:20px;}
+.tbtn .lbl{font-size:10px;letter-spacing:1px;text-transform:uppercase;opacity:.7;}
+.tbtn .cost{font-size:9px;color:#ffd700;}
+.tbtn .desc{font-size:8px;color:rgba(255,255,255,0.4);text-align:center;}
+
+#wave-btn{background:rgba(116,185,255,0.15);border-color:#74b9ff;color:#74b9ff;padding:10px 24px;border-radius:20px;cursor:pointer;font-size:14px;font-weight:700;pointer-events:all;transition:all .15s;}
+#wave-btn:hover{background:rgba(116,185,255,0.3);transform:scale(1.05);}
+#wave-btn:disabled{opacity:.4;cursor:not-allowed;transform:none;}
+
+#info{position:fixed;top:62px;left:50%;transform:translateX(-50%);background:rgba(0,0,0,0.55);border:1px solid rgba(255,255,255,0.08);border-radius:10px;padding:6px 18px;color:rgba(255,255,255,0.5);font-size:11px;pointer-events:none;backdrop-filter:blur(6px);white-space:nowrap;}
+
+.screen{position:fixed;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;backdrop-filter:blur(8px);transition:opacity .3s;}
+.screen.hidden{opacity:0;pointer-events:none;}
+#start-screen{background:rgba(5,15,5,0.88);}
+#start-screen h1{color:#a8ff78;font-size:52px;font-weight:900;text-shadow:0 0 40px #44ff4488;margin-bottom:6px;}
+#start-screen p{color:#888;font-size:15px;margin-bottom:36px;}
+#go-screen{background:rgba(5,5,15,0.9);}
+#go-screen h1{color:#ff6b6b;font-size:52px;font-weight:900;text-shadow:0 0 40px #ff444488;margin-bottom:6px;}
+#go-screen .sub{color:#ccc;font-size:18px;margin-bottom:4px;}
+#go-screen .sub2{color:#ffd700;font-size:14px;margin-bottom:36px;}
+#win-screen{background:rgba(5,15,5,0.9);}
+#win-screen h1{color:#ffd700;font-size:52px;font-weight:900;text-shadow:0 0 40px #ffcc0088;margin-bottom:6px;}
+
+.big-btn{border:none;border-radius:50px;font-size:18px;font-weight:800;cursor:pointer;padding:14px 48px;transition:transform .15s;}
+.green-btn{background:linear-gradient(135deg,#a8ff78,#22cc44);color:#001a00;}
+.green-btn:hover{transform:scale(1.06);}
+.red-btn{background:linear-gradient(135deg,#ff6b6b,#ff4444);color:#fff;}
+.red-btn:hover{transform:scale(1.06);}
+</style>
+</head>
+<body>
+
+<div id="hud">
+  <div class="stat"><div class="stat-lbl">💰 Gold</div><div class="stat-val" id="gold-v">200</div></div>
+  <div class="stat"><div class="stat-lbl">❤️ Lives</div><div class="stat-val" id="lives-v">20</div></div>
+  <div class="stat"><div class="stat-lbl">🌊 Wave</div><div class="stat-val" id="wave-v">0/10</div></div>
+  <div class="stat"><div class="stat-lbl">⭐ Score</div><div class="stat-val" id="score-v">0</div></div>
+  <button id="wave-btn">▶ Send Wave</button>
+</div>
+
+<div id="info">Select a tower below → Click green tiles to place · Right-click tower to sell (50% refund) · Scroll to zoom</div>
+
+<div id="toolbar">
+  <div class="tbtn active" data-type="cannon">
+    <div class="icon">💣</div><div class="lbl">Cannon</div>
+    <div class="cost">$75</div><div class="desc">Slow, high dmg</div>
+  </div>
+  <div class="tbtn" data-type="laser">
+    <div class="icon">🔴</div><div class="lbl">Laser</div>
+    <div class="cost">$100</div><div class="desc">Fast, piercing</div>
+  </div>
+  <div class="tbtn" data-type="freeze">
+    <div class="icon">❄️</div><div class="lbl">Freeze</div>
+    <div class="cost">$125</div><div class="desc">Slows enemies</div>
+  </div>
+  <div class="tbtn" data-type="missile">
+    <div class="icon">🚀</div><div class="lbl">Missile</div>
+    <div class="cost">$200</div><div class="desc">AoE splash dmg</div>
+  </div>
+  <div class="tbtn" data-type="sell">
+    <div class="icon">💸</div><div class="lbl">Sell</div>
+    <div class="cost">50% back</div><div class="desc">Remove tower</div>
+  </div>
+</div>
+
+<div class="screen" id="start-screen">
+  <h1>🧱 Tower Defense</h1>
+  <p>Place towers on green tiles · Defend the base · Survive 10 waves</p>
+  <button class="big-btn green-btn" id="start-btn">▶ Start Game</button>
+</div>
+<div class="screen hidden" id="go-screen">
+  <h1>💀 Defeated!</h1>
+  <div class="sub" id="go-sub">Wave 0 reached</div>
+  <div class="sub2" id="go-score">Score: 0</div>
+  <button class="big-btn red-btn" id="retry-btn">🔄 Try Again</button>
+</div>
+<div class="screen hidden" id="win-screen">
+  <h1>🏆 Victory!</h1>
+  <div class="sub" style="color:#ccc;font-size:18px;margin-bottom:4px">All 10 waves defeated!</div>
+  <div class="sub2" id="win-score" style="color:#ffd700;font-size:14px;margin-bottom:36px">Score: 0</div>
+  <button class="big-btn green-btn" id="win-btn">🔄 Play Again</button>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r134/three.min.js"></script>
+<script>
+// ═══════════════════════════════════════════════════════════
+//  PATH  (grid coords, 12×12 grid, cell=4 world units)
+// ═══════════════════════════════════════════════════════════
+const COLS=14, ROWS=12, CELL=4;
+const PATH_COORDS=[
+  [0,2],[1,2],[2,2],[3,2],[4,2],
+  [4,3],[4,4],[4,5],
+  [3,5],[2,5],[1,5],
+  [1,6],[1,7],[1,8],
+  [2,8],[3,8],[4,8],[5,8],[6,8],
+  [6,7],[6,6],[6,5],[6,4],[6,3],
+  [7,3],[8,3],[9,3],[10,3],[11,3],
+  [11,4],[11,5],[11,6],[11,7],[11,8],[11,9],
+  [10,9],[9,9],[8,9],[7,9],[6,9],
+  [6,10],[6,11],[7,11],[8,11],[9,11],[10,11],[11,11],[12,11],[13,11]
+];
+const PATH_SET=new Set(PATH_COORDS.map(([c,r])=>r*COLS+c));
+
+// World position of grid cell centre
+function gw(col,row){ return new THREE.Vector3(col*CELL+CELL/2, 0, row*CELL+CELL/2); }
+
+// ═══════════════════════════════════════════════════════════
+//  RENDERER / SCENE
+// ═══════════════════════════════════════════════════════════
+const renderer=new THREE.WebGLRenderer({antialias:true});
+renderer.setSize(innerWidth,innerHeight);
+renderer.shadowMap.enabled=true;
+renderer.shadowMap.type=THREE.PCFSoftShadowMap;
+renderer.setPixelRatio(Math.min(devicePixelRatio,2));
+renderer.toneMapping=THREE.ACESFilmicToneMapping;
+renderer.toneMappingExposure=1.1;
+document.body.appendChild(renderer.domElement);
+
+const scene=new THREE.Scene();
+scene.background=new THREE.Color(0x1a2e1a);
+scene.fog=new THREE.Fog(0x1a2e1a,80,160);
+
+const camera=new THREE.PerspectiveCamera(45,innerWidth/innerHeight,0.1,300);
+const CX=COLS*CELL/2, CZ=ROWS*CELL/2;
+camera.position.set(CX,55,CZ+50);
+camera.lookAt(CX,0,CZ);
+window.addEventListener('resize',()=>{ camera.aspect=innerWidth/innerHeight; camera.updateProjectionMatrix(); renderer.setSize(innerWidth,innerHeight); });
+
+// ── Lights ──────────────────────────────────────────────
+scene.add(new THREE.AmbientLight(0xccddcc,0.7));
+const sun=new THREE.DirectionalLight(0xfff5e0,1.3);
+sun.position.set(30,60,20); sun.castShadow=true;
+sun.shadow.mapSize.set(2048,2048);
+sun.shadow.camera.left=sun.shadow.camera.bottom=-80;
+sun.shadow.camera.right=sun.shadow.camera.top=80;
+scene.add(sun);
+const fillLight=new THREE.DirectionalLight(0xaaddff,0.3);
+fillLight.position.set(-20,20,-10);
+scene.add(fillLight);
+
+// ═══════════════════════════════════════════════════════════
+//  GROUND & PATH TILES
+// ═══════════════════════════════════════════════════════════
+const grassMat=new THREE.MeshStandardMaterial({color:0x3a7a2a,roughness:0.9});
+const pathMat =new THREE.MeshStandardMaterial({color:0x8a7a5a,roughness:0.95});
+const baseMat =new THREE.MeshStandardMaterial({color:0x2244aa,emissive:0x112266,emissiveIntensity:0.4,roughness:0.3,metalness:0.5});
+const hoverMat=new THREE.MeshStandardMaterial({color:0x88ff88,transparent:true,opacity:0.35,depthWrite:false});
+
+// Ground
+const gnd=new THREE.Mesh(new THREE.PlaneGeometry(COLS*CELL+4,ROWS*CELL+4),grassMat);
+gnd.rotation.x=-Math.PI/2; gnd.position.set(CX,-0.1,CZ); gnd.receiveShadow=true; scene.add(gnd);
+
+// Tiles
+const tileObjs=[]; // tileObjs[row][col]
+for(let r=0;r<ROWS;r++){
+  tileObjs[r]=[];
+  for(let c=0;c<COLS;c++){
+    const isPath=PATH_SET.has(r*COLS+c);
+    const isLast=c===13&&r===11;
+    const mat=isLast?baseMat:isPath?pathMat:grassMat;
+    const tile=new THREE.Mesh(new THREE.BoxGeometry(CELL-0.15,0.2,CELL-0.15),mat.clone());
+    tile.position.set(c*CELL+CELL/2,0,r*CELL+CELL/2);
+    tile.receiveShadow=true;
+    tile._col=c; tile._row=r; tile._isPath=isPath; tile._isBase=isLast;
+    scene.add(tile); tileObjs[r][c]=tile;
+  }
+}
+
+// Path decorations — rounded stones
+PATH_COORDS.forEach(([c,r],i)=>{
+  if(i%3!==0) return;
+  const stone=new THREE.Mesh(new THREE.SphereGeometry(0.18,6,6),new THREE.MeshStandardMaterial({color:0x998877,roughness:0.9}));
+  const w=gw(c,r);
+  stone.position.set(w.x+(Math.random()-.5)*2.5,0.18,w.z+(Math.random()-.5)*2.5);
+  scene.add(stone);
+});
+
+// Base marker — glowing dome
+const baseDome=new THREE.Mesh(new THREE.SphereGeometry(1.4,14,10),new THREE.MeshStandardMaterial({color:0x4466ff,emissive:0x2244ff,emissiveIntensity:0.8,transparent:true,opacity:0.7}));
+const bw=gw(13,11); baseDome.position.set(bw.x,1.4,bw.z); scene.add(baseDome);
+
+// Hover tile
+const hoverTile=new THREE.Mesh(new THREE.BoxGeometry(CELL-0.1,0.25,CELL-0.1),hoverMat);
+hoverTile.visible=false; scene.add(hoverTile);
+
+// ═══════════════════════════════════════════════════════════
+//  TOWER DEFINITIONS
+// ═══════════════════════════════════════════════════════════
+const TOWER_DEF={
+  cannon:{ cost:75,  dmg:40,  range:7,  rate:1.2,  color:0x888888, emissive:0x444444, splash:0,  slow:0,   label:'Cannon'  },
+  laser: { cost:100, dmg:12,  range:9,  rate:0.25, color:0xff2222, emissive:0xff0000, splash:0,  slow:0,   label:'Laser'   },
+  freeze:{ cost:125, dmg:5,   range:6,  rate:0.8,  color:0x44aaff, emissive:0x2288ff, splash:0,  slow:0.5, label:'Freeze'  },
+  missile:{ cost:200,dmg:60,  range:10, rate:2.0,  color:0xffaa00, emissive:0xff8800, splash:2.5,slow:0,   label:'Missile' },
+};
+
+// ═══════════════════════════════════════════════════════════
+//  BUILD TOWER MESH  (rounded!)
+// ═══════════════════════════════════════════════════════════
+function buildTowerMesh(type){
+  const def=TOWER_DEF[type];
+  const g=new THREE.Group();
+  const bMat=new THREE.MeshStandardMaterial({color:def.color,emissive:def.emissive,emissiveIntensity:0.3,roughness:0.3,metalness:0.6});
+
+  if(type==='cannon'){
+    // Round base
+    const base=new THREE.Mesh(new THREE.CylinderGeometry(0.9,1.1,0.7,14),bMat);
+    base.position.y=0.35; base.castShadow=true; g.add(base);
+    // Tower body
+    const body=new THREE.Mesh(new THREE.CylinderGeometry(0.7,0.9,1.2,14),bMat);
+    body.position.y=1.3; body.castShadow=true; g.add(body);
+    // Dome top
+    const dome=new THREE.Mesh(new THREE.SphereGeometry(0.72,12,8,0,Math.PI*2,0,Math.PI/2),bMat);
+    dome.position.y=1.9; g.add(dome);
+    // Barrel
+    const barrel=new THREE.Mesh(new THREE.CylinderGeometry(0.18,0.22,1.4,10),new THREE.MeshStandardMaterial({color:0x555555,roughness:0.5,metalness:0.8}));
+    barrel.rotation.x=Math.PI/2; barrel.position.set(0,1.9,0.9);
+    barrel.castShadow=true; g.add(barrel);
+    g._barrel=barrel;
+  }
+  else if(type==='laser'){
+    const base=new THREE.Mesh(new THREE.CylinderGeometry(0.8,1.0,0.5,16),bMat);
+    base.position.y=0.25; base.castShadow=true; g.add(base);
+    const body=new THREE.Mesh(new THREE.CylinderGeometry(0.5,0.7,1.5,16),bMat);
+    body.position.y=1.25; body.castShadow=true; g.add(body);
+    // Crystal top
+    const crystal=new THREE.Mesh(new THREE.OctahedronGeometry(0.55,0),new THREE.MeshStandardMaterial({color:0xff4444,emissive:0xff0000,emissiveIntensity:1.0,transparent:true,opacity:0.85}));
+    crystal.position.y=2.3; g.add(crystal);
+    g._crystal=crystal;
+    // Emitter prongs
+    for(let i=0;i<4;i++){
+      const a=i/4*Math.PI*2;
+      const p=new THREE.Mesh(new THREE.CylinderGeometry(0.06,0.06,0.6,6),bMat);
+      p.position.set(Math.sin(a)*0.45,2.0,Math.cos(a)*0.45);
+      p.rotation.x=Math.PI/2*0.3; g.add(p);
+    }
+  }
+  else if(type==='freeze'){
+    const base=new THREE.Mesh(new THREE.CylinderGeometry(0.9,1.1,0.6,16),bMat);
+    base.position.y=0.3; base.castShadow=true; g.add(base);
+    const body=new THREE.Mesh(new THREE.CylinderGeometry(0.65,0.85,1.4,16),bMat);
+    body.position.y=1.3; body.castShadow=true; g.add(body);
+    // Snowflake sphere
+    const ball=new THREE.Mesh(new THREE.IcosahedronGeometry(0.6,1),new THREE.MeshStandardMaterial({color:0xaaeeff,emissive:0x66ccff,emissiveIntensity:0.7,transparent:true,opacity:0.8,wireframe:false}));
+    ball.position.y=2.4; g.add(ball);
+    g._ball=ball;
+    // Ice spikes
+    for(let i=0;i<6;i++){
+      const a=i/6*Math.PI*2;
+      const spike=new THREE.Mesh(new THREE.ConeGeometry(0.1,0.6,6),bMat);
+      spike.position.set(Math.sin(a)*0.75,2.0,Math.cos(a)*0.75);
+      spike.rotation.z=Math.PI/2+Math.sin(a)*0.3;
+      spike.rotation.y=a; g.add(spike);
+    }
+  }
+  else if(type==='missile'){
+    const base=new THREE.Mesh(new THREE.CylinderGeometry(1.0,1.2,0.6,12),bMat);
+    base.position.y=0.3; base.castShadow=true; g.add(base);
+    const body=new THREE.Mesh(new THREE.CylinderGeometry(0.8,1.0,1.6,12),bMat);
+    body.position.y=1.4; body.castShadow=true; g.add(body);
+    // Rotating launcher arms
+    const arm=new THREE.Group(); arm.position.y=2.5; g.add(arm); g._arm=arm;
+    for(let i=0;i<4;i++){
+      const a=i/4*Math.PI*2;
+      const tube=new THREE.Mesh(new THREE.CylinderGeometry(0.12,0.12,1.0,8),new THREE.MeshStandardMaterial({color:0xffaa00,roughness:0.4,metalness:0.7}));
+      tube.rotation.z=Math.PI/2; tube.position.set(Math.sin(a)*0.7,0,Math.cos(a)*0.7); arm.add(tube);
+      const tip=new THREE.Mesh(new THREE.ConeGeometry(0.14,0.35,8),new THREE.MeshStandardMaterial({color:0xff6600,emissive:0xff4400,emissiveIntensity:0.5}));
+      tip.rotation.z=Math.PI/2; tip.position.set(Math.sin(a)*1.2,0,Math.cos(a)*1.2); arm.add(tip);
+    }
+  }
+  return g;
+}
+
+// ═══════════════════════════════════════════════════════════
+//  GAME STATE
+// ═══════════════════════════════════════════════════════════
+let gold=200, lives=20, score=0, waveNum=0, gameState='idle'; // idle|wave|gameover|win
+const MAX_WAVES=10;
+const towers=[];       // {type, col, row, mesh, cooldown, def}
+const enemies=[];      // {mesh, hp, maxHp, pathIdx, t, speed, slow, slowTimer, hpBar}
+const projectiles=[];  // {mesh, target, speed, dmg, splash, type}
+const particles=[];    // {mesh, vel, life, maxLife}
+let waveActive=false, enemiesLeft=0, spawnTimer=0, spawnInterval=1.2;
+const towerGrid={}; // key: "col,row"
+
+// ═══════════════════════════════════════════════════════════
+//  WAVE DEFINITIONS
+// ═══════════════════════════════════════════════════════════
+function waveConfig(w){
+  return {
+    count: 8+w*4,
+    hp:    60+w*40,
+    speed: 3+w*0.4,
+    gold:  10+w*3,
+    interval: Math.max(0.4, 1.4-w*0.08)
+  };
+}
+
+// ═══════════════════════════════════════════════════════════
+//  ENEMY MESH  (round!)
+// ═══════════════════════════════════════════════════════════
+function buildEnemy(wave){
+  const g=new THREE.Group();
+  const hue=wave>6?0xff2200:wave>3?0xffaa00:0x44dd44;
+  const body=new THREE.Mesh(new THREE.SphereGeometry(0.55,12,10),new THREE.MeshStandardMaterial({color:hue,emissive:hue,emissiveIntensity:0.3,roughness:0.4,metalness:0.3}));
+  body.position.y=0.6; body.castShadow=true; g.add(body);
+  // Eyes
+  [-0.2,0.2].forEach(x=>{
+    const eye=new THREE.Mesh(new THREE.SphereGeometry(0.1,8,8),new THREE.MeshStandardMaterial({color:0xffffff,emissive:0xffffff,emissiveIntensity:0.8}));
+    eye.position.set(x,0.75,0.48); g.add(eye);
+    const pupil=new THREE.Mesh(new THREE.SphereGeometry(0.05,6,6),new THREE.MeshStandardMaterial({color:0x000000}));
+    pupil.position.set(x,0.75,0.54); g.add(pupil);
+  });
+  // Legs
+  [-0.25,0.25].forEach(x=>{
+    const leg=new THREE.Mesh(new THREE.CylinderGeometry(0.1,0.12,0.5,8),new THREE.MeshStandardMaterial({color:hue,roughness:0.6}));
+    leg.position.set(x,0.15,0); g.add(leg);
+  });
+  return g;
+}
+
+// HP bar canvas
+function makeHPBar(){
+  const c=document.createElement('canvas'); c.width=64; c.height=10;
+  const ctx=c.getContext('2d');
+  const tex=new THREE.CanvasTexture(c);
+  const mesh=new THREE.Mesh(new THREE.PlaneGeometry(1.2,0.2),new THREE.MeshBasicMaterial({map:tex,transparent:true,depthWrite:false}));
+  mesh._canvas=c; mesh._ctx=ctx; mesh._tex=tex;
+  return mesh;
+}
+function updateHPBar(bar,frac){
+  const ctx=bar._ctx,c=bar._canvas;
+  ctx.clearRect(0,0,64,10);
+  ctx.fillStyle='#333'; ctx.fillRect(0,0,64,10);
+  const g=ctx.createLinearGradient(0,0,64*frac,0);
+  g.addColorStop(0,'#ff4444'); g.addColorStop(0.5,'#ffaa00'); g.addColorStop(1,'#44ff44');
+  ctx.fillStyle=g; ctx.fillRect(1,1,Math.max(1,62*frac),8);
+  bar._tex.needsUpdate=true;
+}
+
+// ═══════════════════════════════════════════════════════════
+//  SPAWN ENEMY
+// ═══════════════════════════════════════════════════════════
+function spawnEnemy(cfg){
+  const mesh=buildEnemy(waveNum);
+  const start=gw(PATH_COORDS[0][0],PATH_COORDS[0][1]);
+  mesh.position.copy(start);
+  scene.add(mesh);
+  const hpBar=makeHPBar();
+  hpBar.position.set(0,1.8,0);
+  mesh.add(hpBar);
+  updateHPBar(hpBar,1);
+  enemies.push({mesh,hp:cfg.hp,maxHp:cfg.hp,pathIdx:0,t:0,speed:cfg.speed,slow:0,slowTimer:0,gold:cfg.gold,hpBar});
+}
+
+// ═══════════════════════════════════════════════════════════
+//  PROJECTILE
+// ═══════════════════════════════════════════════════════════
+function fireAt(tower, enemy){
+  const def=tower.def;
+  let pMat;
+  if(def.splash>0) pMat=new THREE.MeshStandardMaterial({color:0xff8800,emissive:0xff6600,emissiveIntensity:1});
+  else if(def.slow>0) pMat=new THREE.MeshStandardMaterial({color:0x44aaff,emissive:0x2288ff,emissiveIntensity:1});
+  else if(def.dmg>30) pMat=new THREE.MeshStandardMaterial({color:0x888888,emissive:0x666666,emissiveIntensity:0.5});
+  else pMat=new THREE.MeshStandardMaterial({color:0xff2222,emissive:0xff0000,emissiveIntensity:1});
+
+  const geo=def.splash>0?new THREE.SphereGeometry(0.22,8,8):new THREE.SphereGeometry(0.14,8,8);
+  const mesh=new THREE.Mesh(geo,pMat);
+  const tw=gw(tower.col,tower.row);
+  mesh.position.set(tw.x,2.2,tw.z);
+  scene.add(mesh);
+  projectiles.push({mesh,target:enemy,speed:14+Math.random()*4,dmg:def.dmg,splash:def.splash,slow:def.slow,type:tower.type});
+}
+
+// ═══════════════════════════════════════════════════════════
+//  EXPLOSION PARTICLES
+// ═══════════════════════════════════════════════════════════
+function explode(pos,col,count=8){
+  for(let i=0;i<count;i++){
+    const mesh=new THREE.Mesh(
+      new THREE.SphereGeometry(0.15+Math.random()*0.2,6,6),
+      new THREE.MeshStandardMaterial({color:col,emissive:col,emissiveIntensity:1,transparent:true,opacity:1})
+    );
+    mesh.position.copy(pos);
+    scene.add(mesh);
+    const vel=new THREE.Vector3((Math.random()-.5)*6,(Math.random()*4+2),(Math.random()-.5)*6);
+    particles.push({mesh,vel,life:0.6+Math.random()*0.4,maxLife:0.6+Math.random()*0.4});
+  }
+}
+
+// ═══════════════════════════════════════════════════════════
+//  TOWER PLACEMENT
+// ═══════════════════════════════════════════════════════════
+const COSTS_T={cannon:75,laser:100,freeze:125,missile:200};
+function placeTower(col,row,type){
+  if(type==='sell') return;
+  if(PATH_SET.has(row*COLS+col)){ flashInfo('Cannot build on path!'); return; }
+  if(towerGrid[col+','+row]){ flashInfo('Tile occupied!'); return; }
+  const cost=COSTS_T[type]||0;
+  if(gold<cost){ flashInfo('Not enough gold! 💸'); return; }
+  gold-=cost;
+  const mesh=buildTowerMesh(type);
+  const w=gw(col,row);
+  mesh.position.set(w.x,0,w.z);
+  scene.add(mesh);
+  const t={type,col,row,mesh,cooldown:0,def:TOWER_DEF[type]};
+  towers.push(t);
+  towerGrid[col+','+row]=t;
+  updateHUD2();
+}
+function sellTower(col,row){
+  const key=col+','+row;
+  const t=towerGrid[key];
+  if(!t) return;
+  gold+=Math.floor(COSTS_T[t.type]*0.5);
+  scene.remove(t.mesh);
+  t.mesh.traverse(c=>{ if(c.geometry)c.geometry.dispose(); });
+  towers.splice(towers.indexOf(t),1);
+  delete towerGrid[key];
+  updateHUD2();
+}
+
+// ═══════════════════════════════════════════════════════════
+//  HUD
+// ═══════════════════════════════════════════════════════════
+function updateHUD2(){
+  document.getElementById('gold-v').textContent='$'+gold;
+  document.getElementById('lives-v').textContent=lives;
+  document.getElementById('wave-v').textContent=waveNum+'/'+MAX_WAVES;
+  document.getElementById('score-v').textContent=score;
+}
+function flashInfo(msg){
+  const el=document.getElementById('info');
+  el.textContent=msg; el.style.color='#ff9f43';
+  setTimeout(()=>{ el.textContent='Select a tower below → Click green tiles to place · Right-click tower to sell (50% refund) · Scroll to zoom'; el.style.color=''; },2200);
+}
+
+// ═══════════════════════════════════════════════════════════
+//  WAVE LOGIC
+// ═══════════════════════════════════════════════════════════
+document.getElementById('wave-btn').addEventListener('click',()=>{
+  if(waveActive||gameState!=='idle') return;
+  if(waveNum>=MAX_WAVES) return;
+  waveNum++;
+  const cfg=waveConfig(waveNum);
+  enemiesLeft=cfg.count;
+  spawnInterval=cfg.interval;
+  spawnTimer=0;
+  waveActive=true;
+  document.getElementById('wave-btn').disabled=true;
+  updateHUD2();
+  flashInfo(`Wave ${waveNum} incoming! ${cfg.count} enemies · HP: ${cfg.hp}`);
+  currentWaveCfg=cfg;
+});
+let currentWaveCfg=null;
+
+function checkWaveEnd(){
+  if(!waveActive) return;
+  if(enemiesLeft<=0 && enemies.length===0){
+    waveActive=false;
+    if(waveNum>=MAX_WAVES){
+      gameState='win';
+      document.getElementById('win-score').textContent='Score: '+score;
+      document.getElementById('win-screen').classList.remove('hidden');
+    } else {
+      document.getElementById('wave-btn').disabled=false;
+      flashInfo(`Wave ${waveNum} cleared! Place more towers before next wave.`);
+    }
+  }
+}
+
+// ═══════════════════════════════════════════════════════════
+//  RAYCASTING / INPUT
+// ═══════════════════════════════════════════════════════════
+const raycaster=new THREE.Raycaster();
+const mouse2=new THREE.Vector2();
+const groundPlane=new THREE.Plane(new THREE.Vector3(0,1,0),0);
+const hitPt=new THREE.Vector3();
+let selectedTool='cannon';
+
+document.querySelectorAll('.tbtn').forEach(btn=>{
+  btn.addEventListener('click',()=>{
+    document.querySelectorAll('.tbtn').forEach(b=>b.classList.remove('active'));
+    btn.classList.add('active');
+    selectedTool=btn.dataset.type;
+  });
+});
+
+function pickGrid(cx,cy){
+  mouse2.x=(cx/innerWidth)*2-1;
+  mouse2.y=-(cy/innerHeight)*2+1;
+  raycaster.setFromCamera(mouse2,camera);
+  raycaster.ray.intersectPlane(groundPlane,hitPt);
+  const col=Math.floor(hitPt.x/CELL), row=Math.floor(hitPt.z/CELL);
+  return [col,row];
+}
+
+renderer.domElement.addEventListener('click',e=>{
+  if(gameState==='idle'||gameState==='wave'){
+    const [col,row]=pickGrid(e.clientX,e.clientY);
+    if(col>=0&&col<COLS&&row>=0&&row<ROWS){
+      if(selectedTool==='sell') sellTower(col,row);
+      else placeTower(col,row,selectedTool);
+    }
+  }
+});
+renderer.domElement.addEventListener('contextmenu',e=>{
+  e.preventDefault();
+  const [col,row]=pickGrid(e.clientX,e.clientY);
+  if(col>=0&&col<COLS&&row>=0&&row<ROWS) sellTower(col,row);
+});
+renderer.domElement.addEventListener('mousemove',e=>{
+  const [col,row]=pickGrid(e.clientX,e.clientY);
+  if(col>=0&&col<COLS&&row>=0&&row<ROWS&&!PATH_SET.has(row*COLS+col)&&!towerGrid[col+','+row]){
+    hoverTile.position.set(col*CELL+CELL/2,0.13,row*CELL+CELL/2);
+    hoverTile.visible=true;
+  } else { hoverTile.visible=false; }
+});
+renderer.domElement.addEventListener('mouseleave',()=>{ hoverTile.visible=false; });
+
+// Camera controls
+let camTheta=0.05, camPhi=0.78, camR=65, camTarget2=new THREE.Vector3(CX,0,CZ);
+let isDrag=false, lmx=0, lmy=0;
+function updateCam(){
+  const x=camTarget2.x+camR*Math.sin(camPhi)*Math.sin(camTheta);
+  const y=camR*Math.cos(camPhi);
+  const z=camTarget2.z+camR*Math.sin(camPhi)*Math.cos(camTheta);
+  camera.position.set(x,y,z); camera.lookAt(camTarget2);
+}
+updateCam();
+renderer.domElement.addEventListener('mousedown',e=>{ if(e.button===1){isDrag=true;} lmx=e.clientX; lmy=e.clientY; });
+renderer.domElement.addEventListener('mousemove',e=>{ if(isDrag){ camTheta-=(e.clientX-lmx)*0.005; camPhi=Math.max(0.25,Math.min(1.35,camPhi+(e.clientY-lmy)*0.005)); updateCam(); } lmx=e.clientX; lmy=e.clientY; });
+renderer.domElement.addEventListener('mouseup',()=>isDrag=false);
+renderer.domElement.addEventListener('wheel',e=>{ camR=Math.max(20,Math.min(110,camR+e.deltaY*0.05)); updateCam(); },{passive:true});
+window.addEventListener('keydown',e=>{
+  const s=3;
+  if(e.key==='ArrowLeft'||e.key==='a')  camTarget2.x-=s;
+  if(e.key==='ArrowRight'||e.key==='d') camTarget2.x+=s;
+  if(e.key==='ArrowUp'||e.key==='w')    camTarget2.z-=s;
+  if(e.key==='ArrowDown'||e.key==='s')  camTarget2.z+=s;
+  updateCam();
+});
+
+// ═══════════════════════════════════════════════════════════
+//  START / RESET
+// ═══════════════════════════════════════════════════════════
+function startGame(){
+  gold=200; lives=20; score=0; waveNum=0; gameState='idle';
+  waveActive=false; enemiesLeft=0; currentWaveCfg=null;
+  // Clear towers
+  towers.forEach(t=>{ scene.remove(t.mesh); }); towers.length=0;
+  Object.keys(towerGrid).forEach(k=>delete towerGrid[k]);
+  // Clear enemies
+  enemies.forEach(e=>scene.remove(e.mesh)); enemies.length=0;
+  // Clear projectiles
+  projectiles.forEach(p=>scene.remove(p.mesh)); projectiles.length=0;
+  // Clear particles
+  particles.forEach(p=>scene.remove(p.mesh)); particles.length=0;
+  document.getElementById('wave-btn').disabled=false;
+  document.getElementById('start-screen').classList.add('hidden');
+  document.getElementById('go-screen').classList.add('hidden');
+  document.getElementById('win-screen').classList.add('hidden');
+  updateHUD2();
+}
+document.getElementById('start-btn').addEventListener('click',startGame);
+document.getElementById('retry-btn').addEventListener('click',startGame);
+document.getElementById('win-btn').addEventListener('click',startGame);
+
+// ═══════════════════════════════════════════════════════════
+//  MAIN LOOP
+// ═══════════════════════════════════════════════════════════
+let last=performance.now();
+function loop(now){
+  requestAnimationFrame(loop);
+  const dt=Math.min((now-last)/1000,0.05); last=now;
+  const T=now*0.001;
+
+  if(gameState==='gameover'||gameState==='win'){ renderer.render(scene,camera); return; }
+
+  // ── Spawn enemies ─────────────────────────────────────
+  if(waveActive && enemiesLeft>0){
+    spawnTimer-=dt;
+    if(spawnTimer<=0){
+      spawnEnemy(currentWaveCfg);
+      enemiesLeft--;
+      spawnTimer=spawnInterval;
+    }
+  }
+
+  // ── Move enemies ──────────────────────────────────────
+  for(let i=enemies.length-1;i>=0;i--){
+    const e=enemies[i];
+    // Slow timer
+    if(e.slowTimer>0){ e.slowTimer-=dt; if(e.slowTimer<=0) e.slow=0; }
+    const spd=e.speed*(1-e.slow);
+    e.t+=spd*dt;
+    // Interpolate along path
+    const seg=Math.floor(e.t);
+    const frac=e.t-seg;
+    if(seg>=PATH_COORDS.length-1){
+      // Reached base
+      lives=Math.max(0,lives-1);
+      scene.remove(e.mesh);
+      enemies.splice(i,1);
+      updateHUD2();
+      if(lives<=0){
+        gameState='gameover';
+        document.getElementById('go-sub').textContent='Wave '+waveNum+' reached';
+        document.getElementById('go-score').textContent='Score: '+score;
+        document.getElementById('go-screen').classList.remove('hidden');
+      }
+      continue;
+    }
+    const [c0,r0]=PATH_COORDS[seg];
+    const [c1,r1]=PATH_COORDS[Math.min(seg+1,PATH_COORDS.length-1)];
+    const p0=gw(c0,r0), p1=gw(c1,r1);
+    e.mesh.position.lerpVectors(p0,p1,frac);
+    e.mesh.position.y=0;
+    // Face direction
+    const dir=new THREE.Vector3().subVectors(p1,p0).normalize();
+    if(dir.length()>0.01) e.mesh.rotation.y=Math.atan2(dir.x,dir.z);
+    // HP bar faces camera
+    if(e.hpBar){ e.hpBar.lookAt(camera.position); }
+    // Freeze colour tint
+    e.mesh.children[0].material.emissiveIntensity=e.slow>0?0.8:0.3;
+    e.mesh.children[0].material.emissive.setHex(e.slow>0?0x44aaff:e.mesh.children[0].material.color.getHex());
+  }
+
+  // ── Tower targeting & shooting ────────────────────────
+  towers.forEach(t=>{
+    t.cooldown=Math.max(0,t.cooldown-dt);
+    if(t.cooldown>0) return;
+    const tw=gw(t.col,t.row);
+    // Find closest enemy in range
+    let best=null, bestDist=Infinity;
+    enemies.forEach(e=>{
+      const d=tw.distanceTo(e.mesh.position);
+      if(d<=t.def.range && d<bestDist){ bestDist=d; best=e; }
+    });
+    if(best){
+      fireAt(t,best);
+      t.cooldown=t.def.rate;
+    }
+    // Animate tower
+    if(t.mesh._arm) t.mesh._arm.rotation.y=T*2;
+    if(t.mesh._crystal) t.mesh._crystal.rotation.y=T*3;
+    if(t.mesh._ball) t.mesh._ball.rotation.y=T*1.5;
+    if(t.mesh._barrel && best){
+      const tw2=gw(t.col,t.row);
+      const dir2=new THREE.Vector3().subVectors(best.mesh.position,tw2);
+      t.mesh.rotation.y=Math.atan2(dir2.x,dir2.z);
+    }
+  });
+
+  // ── Move projectiles ──────────────────────────────────
+  for(let i=projectiles.length-1;i>=0;i--){
+    const p=projectiles[i];
+    if(!p.target||p.target.hp<=0){
+      scene.remove(p.mesh); projectiles.splice(i,1); continue;
+    }
+    const dir=new THREE.Vector3().subVectors(p.target.mesh.position.clone().setY(1),p.mesh.position).normalize();
+    p.mesh.position.addScaledVector(dir,p.speed*dt);
+    // Hit check
+    if(p.mesh.position.distanceTo(p.target.mesh.position)<0.8){
+      // Splash damage
+      if(p.splash>0){
+        explode(p.mesh.position.clone(),0xff8800,12);
+        enemies.forEach(e=>{
+          if(e.mesh.position.distanceTo(p.mesh.position)<p.splash){
+            e.hp-=p.dmg;
+            updateHPBar(e.hpBar,Math.max(0,e.hp/e.maxHp));
+          }
+        });
+      } else {
+        p.target.hp-=p.dmg;
+        updateHPBar(p.target.hpBar,Math.max(0,p.target.hp/p.target.maxHp));
+        if(p.slow>0){ p.target.slow=p.slow; p.target.slowTimer=2.5; }
+        explode(p.mesh.position.clone(),p.slow>0?0x44aaff:0xffaa44,4);
+      }
+      scene.remove(p.mesh); projectiles.splice(i,1);
+    }
+  }
+
+  // ── Kill dead enemies ─────────────────────────────────
+  for(let i=enemies.length-1;i>=0;i--){
+    if(enemies[i].hp<=0){
+      explode(enemies[i].mesh.position.clone(),0x44ff44,10);
+      gold+=enemies[i].gold;
+      score+=enemies[i].gold*5;
+      scene.remove(enemies[i].mesh);
+      enemies.splice(i,1);
+      updateHUD2();
+    }
+  }
+
+  // ── Particles ─────────────────────────────────────────
+  for(let i=particles.length-1;i>=0;i--){
+    const p=particles[i];
+    p.life-=dt;
+    if(p.life<=0){ scene.remove(p.mesh); particles.splice(i,1); continue; }
+    p.vel.y-=12*dt;
+    p.mesh.position.addScaledVector(p.vel,dt);
+    p.mesh.material.opacity=p.life/p.maxLife;
+    p.mesh.scale.setScalar(p.life/p.maxLife);
+  }
+
+  // ── Base dome pulse ───────────────────────────────────
+  baseDome.material.emissiveIntensity=0.5+Math.sin(T*3)*0.3;
+  baseDome.scale.setScalar(1+Math.sin(T*2)*0.04);
+
+  // ── Check wave end ────────────────────────────────────
+  checkWaveEnd();
+
+  renderer.render(scene,camera);
+}
+
+updateHUD2();
+loop(performance.now());
+</script>
+</body>
+</html>

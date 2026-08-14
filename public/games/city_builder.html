@@ -1,0 +1,682 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>🏙️ City Builder</title>
+<script type="application/json" id="game-help">
+{
+  "goal": "Grow a happy little town. You start with $5,000 — zone buildings, collect income each day and keep your citizens happy.",
+  "controls": [
+    { "keys": "Pick a tool + click", "action": "Place a road or building on the grid" },
+    { "keys": "Right-click", "action": "Bulldoze a tile (free)" },
+    { "keys": "Scroll", "action": "Zoom the camera in and out" },
+    { "keys": "Drag", "action": "Pan around the map" },
+    { "keys": "1x / 3x / ⏸", "action": "Change or pause the game speed" }
+  ],
+  "tips": [
+    "Roads connect your buildings — nothing works isolated.",
+    "Parks and hospitals raise happiness.",
+    "Keep an eye on funds; don't build faster than you earn."
+  ]
+}
+</script>
+<style>
+*{margin:0;padding:0;box-sizing:border-box;}
+body{background:#1a2a1a;overflow:hidden;font-family:'Segoe UI',sans-serif;}
+canvas{display:block;}
+
+/* ── HUD ── */
+#hud{position:fixed;top:0;left:0;right:0;display:flex;justify-content:space-between;align-items:flex-start;padding:14px 18px;pointer-events:none;gap:10px;}
+.stat-card{background:rgba(0,0,0,0.55);border:1px solid rgba(255,255,255,0.1);border-radius:14px;padding:8px 16px;backdrop-filter:blur(8px);text-align:center;}
+.stat-lbl{font-size:10px;letter-spacing:2px;text-transform:uppercase;opacity:.6;color:#fff;}
+.stat-val{font-size:22px;font-weight:800;color:#fff;line-height:1.1;}
+#pop-card .stat-val{color:#7fffb0;}
+#money-card .stat-val{color:#ffd700;}
+#happy-card .stat-val{color:#ff9f43;}
+#day-card .stat-val{color:#74b9ff;}
+
+/* ── Toolbar ── */
+#toolbar{position:fixed;bottom:0;left:0;right:0;display:flex;justify-content:center;align-items:center;gap:8px;padding:12px 16px;background:rgba(0,0,0,0.7);backdrop-filter:blur(10px);border-top:1px solid rgba(255,255,255,0.08);flex-wrap:wrap;}
+.tbtn{display:flex;flex-direction:column;align-items:center;gap:3px;border:2px solid rgba(255,255,255,0.12);border-radius:14px;padding:8px 14px;cursor:pointer;background:rgba(255,255,255,0.05);transition:all .15s;color:#fff;min-width:64px;}
+.tbtn:hover{background:rgba(255,255,255,0.12);transform:translateY(-2px);}
+.tbtn.active{border-color:#fff;background:rgba(255,255,255,0.18);transform:translateY(-3px);box-shadow:0 4px 20px rgba(255,255,255,0.1);}
+.tbtn .icon{font-size:22px;line-height:1;}
+.tbtn .lbl{font-size:10px;letter-spacing:1px;text-transform:uppercase;opacity:.7;}
+.tbtn .cost{font-size:9px;color:#ffd700;opacity:.9;}
+
+/* ── Info panel ── */
+#info{position:fixed;top:80px;left:50%;transform:translateX(-50%);background:rgba(0,0,0,0.6);border:1px solid rgba(255,255,255,0.1);border-radius:10px;padding:8px 20px;color:rgba(255,255,255,0.6);font-size:12px;letter-spacing:1px;pointer-events:none;backdrop-filter:blur(6px);}
+
+/* ── Speed controls ── */
+#speed-wrap{position:fixed;top:14px;left:50%;transform:translateX(-50%);display:flex;gap:6px;pointer-events:all;}
+.spd-btn{background:rgba(0,0,0,0.5);border:1px solid rgba(255,255,255,0.15);border-radius:8px;color:#fff;padding:5px 12px;font-size:13px;cursor:pointer;transition:all .15s;}
+.spd-btn:hover{background:rgba(255,255,255,0.15);}
+.spd-btn.active{background:rgba(116,185,255,0.3);border-color:#74b9ff;}
+
+/* ── Tooltip ── */
+#tooltip{position:fixed;background:rgba(0,0,0,0.8);border:1px solid rgba(255,255,255,0.15);border-radius:8px;padding:6px 12px;color:#fff;font-size:12px;pointer-events:none;display:none;backdrop-filter:blur(6px);}
+</style>
+</head>
+<body>
+
+<!-- HUD -->
+<div id="hud">
+  <div class="stat-card" id="pop-card">
+    <div class="stat-lbl">Population</div>
+    <div class="stat-val" id="pop-val">0</div>
+  </div>
+  <div class="stat-card" id="money-card">
+    <div class="stat-lbl">💰 Funds</div>
+    <div class="stat-val" id="money-val">$5000</div>
+  </div>
+  <div class="stat-card" id="happy-card">
+    <div class="stat-lbl">Happiness</div>
+    <div class="stat-val" id="happy-val">😐</div>
+  </div>
+  <div class="stat-card" id="day-card">
+    <div class="stat-lbl">Day</div>
+    <div class="stat-val" id="day-val">1</div>
+  </div>
+</div>
+
+<!-- Speed -->
+<div id="speed-wrap">
+  <button class="spd-btn active" data-speed="1">▶ 1x</button>
+  <button class="spd-btn" data-speed="3">⏩ 3x</button>
+  <button class="spd-btn" data-speed="0">⏸</button>
+</div>
+
+<!-- Info -->
+<div id="info">Click a tile tool below, then click the grid to build · Right-click to bulldoze · Scroll to zoom · Drag to pan</div>
+
+<!-- Toolbar -->
+<div id="toolbar">
+  <div class="tbtn active" data-type="road">
+    <div class="icon">🛣️</div><div class="lbl">Road</div><div class="cost">$50</div>
+  </div>
+  <div class="tbtn" data-type="house">
+    <div class="icon">🏠</div><div class="lbl">House</div><div class="cost">$200</div>
+  </div>
+  <div class="tbtn" data-type="shop">
+    <div class="icon">🏪</div><div class="lbl">Shop</div><div class="cost">$400</div>
+  </div>
+  <div class="tbtn" data-type="factory">
+    <div class="icon">🏭</div><div class="lbl">Factory</div><div class="cost">$800</div>
+  </div>
+  <div class="tbtn" data-type="park">
+    <div class="icon">🌳</div><div class="lbl">Park</div><div class="cost">$300</div>
+  </div>
+  <div class="tbtn" data-type="tower">
+    <div class="icon">🏢</div><div class="lbl">Tower</div><div class="cost">$1200</div>
+  </div>
+  <div class="tbtn" data-type="hospital">
+    <div class="icon">🏥</div><div class="lbl">Hospital</div><div class="cost">$1500</div>
+  </div>
+  <div class="tbtn" data-type="bulldoze">
+    <div class="icon">🔨</div><div class="lbl">Bulldoze</div><div class="cost">Free</div>
+  </div>
+</div>
+
+<div id="tooltip"></div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r134/three.min.js"></script>
+<script>
+// ═══════════════════════════════════════════════════════════
+//  CONSTANTS
+// ═══════════════════════════════════════════════════════════
+const GRID = 20;      // 20×20 city grid
+const CELL = 4;       // world units per cell
+const COSTS = { road:50, house:200, shop:400, factory:800, park:300, tower:1200, hospital:1500 };
+const POP   = { house:10, shop:5, factory:2, tower:40, hospital:8 };
+const INCOME= { road:0, house:15, shop:40, factory:80, park:-2, tower:120, hospital:20 };
+const HAPPY = { road:0, house:2, shop:3, factory:-5, park:10, tower:1, hospital:8 };
+
+// ═══════════════════════════════════════════════════════════
+//  SCENE
+// ═══════════════════════════════════════════════════════════
+const W=innerWidth, H=innerHeight;
+const renderer = new THREE.WebGLRenderer({antialias:true});
+renderer.setSize(W,H);
+renderer.shadowMap.enabled=true;
+renderer.shadowMap.type=THREE.PCFSoftShadowMap;
+renderer.setPixelRatio(Math.min(devicePixelRatio,2));
+renderer.toneMapping=THREE.ACESFilmicToneMapping;
+renderer.toneMappingExposure=1.1;
+document.body.appendChild(renderer.domElement);
+
+const scene=new THREE.Scene();
+scene.background=new THREE.Color(0x87ceeb);
+scene.fog=new THREE.Fog(0x87ceeb,60,130);
+
+// ── Camera (isometric-ish) ──────────────────────────────
+const camera=new THREE.PerspectiveCamera(45,W/H,0.1,300);
+const CENTER=GRID*CELL/2;
+camera.position.set(CENTER,38,CENTER+40);
+camera.lookAt(CENTER,0,CENTER);
+window.addEventListener('resize',()=>{ camera.aspect=innerWidth/innerHeight; camera.updateProjectionMatrix(); renderer.setSize(innerWidth,innerHeight); });
+
+// ── Lights ──────────────────────────────────────────────
+const ambient=new THREE.AmbientLight(0xffeedd,0.7);
+scene.add(ambient);
+const sun=new THREE.DirectionalLight(0xfff5e0,1.4);
+sun.position.set(40,60,30);
+sun.castShadow=true;
+sun.shadow.mapSize.set(2048,2048);
+sun.shadow.camera.left=sun.shadow.camera.bottom=-60;
+sun.shadow.camera.right=sun.shadow.camera.top=60;
+sun.shadow.camera.far=200;
+scene.add(sun);
+const fill=new THREE.DirectionalLight(0xaaddff,0.3);
+fill.position.set(-30,20,-20);
+scene.add(fill);
+
+// ═══════════════════════════════════════════════════════════
+//  MATERIALS  (smooth, rounded look)
+// ═══════════════════════════════════════════════════════════
+const mat=(c,r=0.4,m=0.1,e=null,ei=0)=>{
+  const o={color:c,roughness:r,metalness:m};
+  if(e){o.emissive=e;o.emissiveIntensity=ei;}
+  return new THREE.MeshStandardMaterial(o);
+};
+const groundMat  = mat(0x5a8a3a,0.9,0.0);
+const roadMat    = mat(0x444455,0.95,0.0);
+const roadLineMat= mat(0xffffcc,0.8,0.0);
+const houseMat   = mat(0xf0e0c0,0.6,0.05);
+const roofMat    = mat(0xcc4444,0.5,0.05);
+const shopMat    = mat(0x88ccff,0.4,0.1);
+const shopRoofMat= mat(0x2255aa,0.5,0.1);
+const factMat    = mat(0x999988,0.7,0.2);
+const chimMat    = mat(0x555544,0.8,0.1);
+const smokeMat   = mat(0xdddddd,0.9,0.0,0xffffff,0.1);
+const parkMat    = mat(0x44bb44,0.9,0.0);
+const treeTrunkM = mat(0x7a4a1a,0.9,0.0);
+const treeTopM   = mat(0x228b22,0.8,0.0);
+const towerMat   = mat(0xaaccee,0.2,0.6);
+const towerGlass = mat(0x88ddff,0.1,0.8,0x44aaff,0.15);
+const hospMat    = mat(0xffffff,0.5,0.05);
+const hospRoofM  = mat(0x2299ee,0.4,0.1);
+const crossMat   = mat(0xff3333,0.4,0.0,0xff2222,0.3);
+const windowMat  = mat(0xffffaa,0.2,0.3,0xffff88,0.4);
+
+// ═══════════════════════════════════════════════════════════
+//  GROUND GRID
+// ═══════════════════════════════════════════════════════════
+// Ground plane
+const ground=new THREE.Mesh(
+  new THREE.PlaneGeometry(GRID*CELL+10,GRID*CELL+10,1,1),
+  mat(0x4a7a2a,0.95,0.0)
+);
+ground.rotation.x=-Math.PI/2;
+ground.position.set(CENTER,-0.01,CENTER);
+ground.receiveShadow=true;
+scene.add(ground);
+
+// Grid lines (subtle)
+for(let i=0;i<=GRID;i++){
+  const gl=new THREE.Mesh(
+    new THREE.PlaneGeometry(0.05,GRID*CELL),
+    new THREE.MeshStandardMaterial({color:0x3a6a1a,roughness:1,transparent:true,opacity:0.4})
+  );
+  gl.rotation.x=-Math.PI/2; gl.position.set(i*CELL,0.001,CENTER); scene.add(gl);
+  const gl2=new THREE.Mesh(
+    new THREE.PlaneGeometry(GRID*CELL,0.05),
+    new THREE.MeshStandardMaterial({color:0x3a6a1a,roughness:1,transparent:true,opacity:0.4})
+  );
+  gl2.rotation.x=-Math.PI/2; gl2.position.set(CENTER,0.001,i*CELL); scene.add(gl2);
+}
+
+// Hover highlight tile
+const hoverMesh=new THREE.Mesh(
+  new THREE.PlaneGeometry(CELL-0.1,CELL-0.1),
+  new THREE.MeshStandardMaterial({color:0xffffff,transparent:true,opacity:0.25,depthWrite:false})
+);
+hoverMesh.rotation.x=-Math.PI/2;
+hoverMesh.position.y=0.02;
+hoverMesh.visible=false;
+scene.add(hoverMesh);
+
+// ═══════════════════════════════════════════════════════════
+//  CITY STATE
+// ═══════════════════════════════════════════════════════════
+const cityGrid=Array.from({length:GRID},()=>Array(GRID).fill(null)); // null or {type, mesh}
+let money=5000, population=0, happiness=0, day=1, gameSpeed=1;
+let dayTimer=0, incomeTimer=0;
+
+// ═══════════════════════════════════════════════════════════
+//  BUILDING CONSTRUCTORS  (rounded geometry!)
+// ═══════════════════════════════════════════════════════════
+function worldPos(gx,gz){ return [gx*CELL+CELL/2, 0, gz*CELL+CELL/2]; }
+
+function buildRoad(gx,gz){
+  const g=new THREE.Group();
+  // Rounded road slab
+  const slab=new THREE.Mesh(new THREE.CylinderGeometry(CELL*0.68,CELL*0.68,0.18,8),roadMat);
+  slab.position.y=0.09; slab.receiveShadow=true; g.add(slab);
+  // Centre line dots
+  for(let i=-1;i<=1;i++){
+    const dot=new THREE.Mesh(new THREE.CylinderGeometry(0.12,0.12,0.2,8),roadLineMat);
+    dot.position.set(i*1.2,0.1,0); g.add(dot);
+  }
+  const [x,,z]=worldPos(gx,gz); g.position.set(x,0,z); scene.add(g); return g;
+}
+
+function buildHouse(gx,gz){
+  const g=new THREE.Group();
+  // Body — rounded cylinder base
+  const body=new THREE.Mesh(new THREE.CylinderGeometry(1.2,1.3,1.6,12),houseMat);
+  body.position.y=0.8; body.castShadow=true; body.receiveShadow=true; g.add(body);
+  // Roof — cone
+  const roof=new THREE.Mesh(new THREE.ConeGeometry(1.55,1.2,12),roofMat);
+  roof.position.y=2.2; roof.castShadow=true; g.add(roof);
+  // Door
+  const door=new THREE.Mesh(new THREE.CylinderGeometry(0.22,0.22,0.55,10),mat(0x8B4513,0.7));
+  door.position.set(0,0.27,1.15); g.add(door);
+  // Windows
+  [-0.6,0.6].forEach(x=>{
+    const w=new THREE.Mesh(new THREE.SphereGeometry(0.2,8,8),windowMat);
+    w.position.set(x,1.1,1.08); g.add(w);
+  });
+  // Chimney
+  const ch=new THREE.Mesh(new THREE.CylinderGeometry(0.15,0.18,0.8,8),chimMat);
+  ch.position.set(0.5,2.7,0); g.add(ch);
+  const [x,,z]=worldPos(gx,gz); g.position.set(x,0,z); scene.add(g); return g;
+}
+
+function buildShop(gx,gz){
+  const g=new THREE.Group();
+  // Body — wider cylinder
+  const body=new THREE.Mesh(new THREE.CylinderGeometry(1.4,1.4,1.8,16),shopMat);
+  body.position.y=0.9; body.castShadow=true; body.receiveShadow=true; g.add(body);
+  // Flat disc roof
+  const roof=new THREE.Mesh(new THREE.CylinderGeometry(1.7,1.5,0.35,16),shopRoofMat);
+  roof.position.y=1.98; roof.castShadow=true; g.add(roof);
+  // Sign board
+  const sign=new THREE.Mesh(new THREE.BoxGeometry(1.4,0.4,0.08),mat(0xffdd44,0.4,0.1,0xffcc00,0.5));
+  sign.position.set(0,1.2,1.35); g.add(sign);
+  // Awning
+  const awn=new THREE.Mesh(new THREE.CylinderGeometry(0.9,1.1,0.12,12,1,false,0,Math.PI),mat(0xff6644,0.6));
+  awn.position.set(0,1.0,0.7); awn.rotation.y=Math.PI; g.add(awn);
+  const [x,,z]=worldPos(gx,gz); g.position.set(x,0,z); scene.add(g); return g;
+}
+
+function buildFactory(gx,gz){
+  const g=new THREE.Group();
+  // Main building — boxy but with rounded top
+  const body=new THREE.Mesh(new THREE.CylinderGeometry(1.5,1.6,2.0,8),factMat);
+  body.position.y=1.0; body.castShadow=true; body.receiveShadow=true; g.add(body);
+  // Roof dome
+  const dome=new THREE.Mesh(new THREE.SphereGeometry(1.5,12,6,0,Math.PI*2,0,Math.PI/2),factMat);
+  dome.position.y=2.0; g.add(dome);
+  // Chimneys
+  [[-0.6,0.6],[0.6,0.6],[-0.6,-0.6]].forEach(([cx,cz])=>{
+    const ch=new THREE.Mesh(new THREE.CylinderGeometry(0.22,0.28,1.8,10),chimMat);
+    ch.position.set(cx,2.8,cz); ch.castShadow=true; g.add(ch);
+    // Smoke puff
+    const sm=new THREE.Mesh(new THREE.SphereGeometry(0.3+Math.random()*0.2,8,8),smokeMat);
+    sm.position.set(cx,4.0+Math.random()*0.4,cz); g.add(sm);
+  });
+  const [x,,z]=worldPos(gx,gz); g.position.set(x,0,z); scene.add(g); return g;
+}
+
+function buildPark(gx,gz){
+  const g=new THREE.Group();
+  // Grass disc
+  const grass=new THREE.Mesh(new THREE.CylinderGeometry(CELL*0.65,CELL*0.65,0.12,16),parkMat);
+  grass.position.y=0.06; grass.receiveShadow=true; g.add(grass);
+  // Trees
+  const treePos=[[-0.8,-0.8],[0.8,-0.8],[0,-0.2],[0.8,0.8],[-0.8,0.8]];
+  treePos.forEach(([tx,tz])=>{
+    const trunk=new THREE.Mesh(new THREE.CylinderGeometry(0.1,0.14,0.6,8),treeTrunkM);
+    trunk.position.set(tx,0.3,tz); trunk.castShadow=true; g.add(trunk);
+    const top=new THREE.Mesh(new THREE.SphereGeometry(0.45,10,8),treeTopM);
+    top.position.set(tx,0.9,tz); top.castShadow=true; g.add(top);
+    // Second sphere for fuller look
+    const top2=new THREE.Mesh(new THREE.SphereGeometry(0.32,10,8),mat(0x1a8a1a,0.8));
+    top2.position.set(tx+0.15,1.15,tz+0.1); g.add(top2);
+  });
+  // Bench
+  const bench=new THREE.Mesh(new THREE.BoxGeometry(0.8,0.1,0.25),mat(0x8B6914,0.7));
+  bench.position.set(0,0.2,-0.5); g.add(bench);
+  const [x,,z]=worldPos(gx,gz); g.position.set(x,0,z); scene.add(g); return g;
+}
+
+function buildTower(gx,gz){
+  const g=new THREE.Group();
+  // Base plinth
+  const base=new THREE.Mesh(new THREE.CylinderGeometry(1.3,1.5,0.5,16),mat(0x889aaa,0.5,0.3));
+  base.position.y=0.25; base.castShadow=true; g.add(base);
+  // Tower body — tall rounded cylinder
+  const body=new THREE.Mesh(new THREE.CylinderGeometry(1.0,1.2,6.0,16),towerMat);
+  body.position.y=3.5; body.castShadow=true; body.receiveShadow=true; g.add(body);
+  // Glass band floors
+  for(let f=1;f<=5;f++){
+    const band=new THREE.Mesh(new THREE.CylinderGeometry(1.02,1.02,0.3,16),towerGlass);
+    band.position.y=0.5+f*1.0; g.add(band);
+  }
+  // Spire
+  const spire=new THREE.Mesh(new THREE.ConeGeometry(0.25,2.0,10),mat(0xaaccee,0.2,0.8));
+  spire.position.y=7.5; spire.castShadow=true; g.add(spire);
+  // Antenna light
+  const light=new THREE.Mesh(new THREE.SphereGeometry(0.12,8,8),mat(0xff3333,0.2,0.5,0xff0000,1.0));
+  light.position.y=8.6; g.add(light);
+  const [x,,z]=worldPos(gx,gz); g.position.set(x,0,z); scene.add(g); return g;
+}
+
+function buildHospital(gx,gz){
+  const g=new THREE.Group();
+  // Main body
+  const body=new THREE.Mesh(new THREE.CylinderGeometry(1.4,1.4,2.4,12),hospMat);
+  body.position.y=1.2; body.castShadow=true; body.receiveShadow=true; g.add(body);
+  // Dome roof
+  const dome=new THREE.Mesh(new THREE.SphereGeometry(1.4,14,8,0,Math.PI*2,0,Math.PI/2),hospRoofM);
+  dome.position.y=2.4; dome.castShadow=true; g.add(dome);
+  // Red cross on front
+  const crossH=new THREE.Mesh(new THREE.BoxGeometry(0.9,0.25,0.08),crossMat);
+  crossH.position.set(0,1.5,1.41); g.add(crossH);
+  const crossV=new THREE.Mesh(new THREE.BoxGeometry(0.25,0.9,0.08),crossMat);
+  crossV.position.set(0,1.5,1.41); g.add(crossV);
+  // Windows
+  for(let i=0;i<6;i++){
+    const a=i/6*Math.PI*2;
+    const w=new THREE.Mesh(new THREE.SphereGeometry(0.18,8,8),windowMat);
+    w.position.set(Math.sin(a)*1.38,1.5,Math.cos(a)*1.38); g.add(w);
+  }
+  // Helipad on roof
+  const pad=new THREE.Mesh(new THREE.CylinderGeometry(0.7,0.7,0.06,12),mat(0x555555,0.9));
+  pad.position.y=3.2; g.add(pad);
+  const h=new THREE.Mesh(new THREE.TorusGeometry(0.5,0.06,6,12),mat(0xffff00,0.4,0,0xffff00,0.5));
+  h.position.y=3.27; h.rotation.x=Math.PI/2; g.add(h);
+  const [x,,z]=worldPos(gx,gz); g.position.set(x,0,z); scene.add(g); return g;
+}
+
+const BUILDERS={road:buildRoad,house:buildHouse,shop:buildShop,factory:buildFactory,park:buildPark,tower:buildTower,hospital:buildHospital};
+
+// ═══════════════════════════════════════════════════════════
+//  PLACE / BULLDOZE
+// ═══════════════════════════════════════════════════════════
+function recalcStats(){
+  let pop=0,happy=0;
+  for(let r=0;r<GRID;r++) for(let c=0;c<GRID;c++){
+    const t=cityGrid[r][c];
+    if(!t) continue;
+    pop   += POP[t.type]||0;
+    happy += HAPPY[t.type]||0;
+  }
+  population=pop; happiness=happy;
+}
+
+function place(gx,gz,type){
+  if(gx<0||gx>=GRID||gz<0||gz>=GRID) return;
+  if(cityGrid[gz][gx]) return; // occupied
+  const cost=COSTS[type]||0;
+  if(money<cost){ flashMsg('Not enough funds! 💸'); return; }
+  money-=cost;
+  const mesh=BUILDERS[type](gx,gz);
+  cityGrid[gz][gx]={type,mesh};
+  recalcStats();
+  updateHUD();
+}
+
+function bulldoze(gx,gz){
+  if(gx<0||gx>=GRID||gz<0||gz>=GRID) return;
+  const cell=cityGrid[gz][gx];
+  if(!cell) return;
+  scene.remove(cell.mesh);
+  // Dispose geometries
+  cell.mesh.traverse(c=>{ if(c.geometry) c.geometry.dispose(); });
+  cityGrid[gz][gx]=null;
+  money+=Math.floor((COSTS[cell.type]||0)*0.4); // 40% refund
+  recalcStats();
+  updateHUD();
+}
+
+// ═══════════════════════════════════════════════════════════
+//  HUD UPDATE
+// ═══════════════════════════════════════════════════════════
+function happyEmoji(h){
+  if(h>40) return '😄';
+  if(h>20) return '🙂';
+  if(h>0)  return '😐';
+  if(h>-20)return '😟';
+  return '😡';
+}
+function updateHUD(){
+  document.getElementById('pop-val').textContent   = population.toLocaleString();
+  document.getElementById('money-val').textContent = '$'+Math.floor(money).toLocaleString();
+  document.getElementById('happy-val').textContent = happyEmoji(happiness);
+  document.getElementById('day-val').textContent   = day;
+}
+
+// Flash message
+function flashMsg(msg){
+  const el=document.getElementById('info');
+  el.textContent=msg; el.style.color='#ff9f43';
+  setTimeout(()=>{ el.textContent='Click a tile tool below, then click the grid to build · Right-click to bulldoze · Scroll to zoom · Drag to pan'; el.style.color=''; },2000);
+}
+
+// ═══════════════════════════════════════════════════════════
+//  TOOLBAR INPUT
+// ═══════════════════════════════════════════════════════════
+let selectedTool='road';
+document.querySelectorAll('.tbtn').forEach(btn=>{
+  btn.addEventListener('click',()=>{
+    document.querySelectorAll('.tbtn').forEach(b=>b.classList.remove('active'));
+    btn.classList.add('active');
+    selectedTool=btn.dataset.type;
+  });
+});
+
+// Speed buttons
+document.querySelectorAll('.spd-btn').forEach(btn=>{
+  btn.addEventListener('click',()=>{
+    document.querySelectorAll('.spd-btn').forEach(b=>b.classList.remove('active'));
+    btn.classList.add('active');
+    gameSpeed=+btn.dataset.speed;
+  });
+});
+
+// ═══════════════════════════════════════════════════════════
+//  RAYCASTING — grid picking
+// ═══════════════════════════════════════════════════════════
+const raycaster=new THREE.Raycaster();
+const mouse=new THREE.Vector2();
+const groundPlane=new THREE.Plane(new THREE.Vector3(0,1,0),0);
+const hitPoint=new THREE.Vector3();
+
+function screenToGrid(clientX,clientY){
+  mouse.x=(clientX/innerWidth)*2-1;
+  mouse.y=-(clientY/innerHeight)*2+1;
+  raycaster.setFromCamera(mouse,camera);
+  raycaster.ray.intersectPlane(groundPlane,hitPoint);
+  const gx=Math.floor(hitPoint.x/CELL);
+  const gz=Math.floor(hitPoint.z/CELL);
+  return [gx,gz];
+}
+
+// ═══════════════════════════════════════════════════════════
+//  CAMERA CONTROLS (orbit + pan + zoom)
+// ═══════════════════════════════════════════════════════════
+let isDragging=false,lastMX=0,lastMY=0;
+let camTheta=0.6, camPhi=0.9, camRadius=55, camTarget=new THREE.Vector3(CENTER,0,CENTER);
+
+function updateCamera(){
+  const x=camTarget.x+camRadius*Math.sin(camPhi)*Math.sin(camTheta);
+  const y=camRadius*Math.cos(camPhi);
+  const z=camTarget.z+camRadius*Math.sin(camPhi)*Math.cos(camTheta);
+  camera.position.set(x,y,z);
+  camera.lookAt(camTarget);
+}
+updateCamera();
+
+renderer.domElement.addEventListener('mousedown',e=>{
+  if(e.button===1||e.button===2&&e.shiftKey){ isDragging=true; }
+  else if(e.button===0&&!e.shiftKey){
+    // place
+    const [gx,gz]=screenToGrid(e.clientX,e.clientY);
+    if(selectedTool==='bulldoze') bulldoze(gx,gz);
+    else place(gx,gz,selectedTool);
+  } else if(e.button===2){
+    // right-click bulldoze
+    const [gx,gz]=screenToGrid(e.clientX,e.clientY);
+    bulldoze(gx,gz);
+  }
+  lastMX=e.clientX; lastMY=e.clientY;
+});
+renderer.domElement.addEventListener('mousemove',e=>{
+  if(isDragging){
+    const dx=(e.clientX-lastMX)*0.005;
+    const dy=(e.clientY-lastMY)*0.005;
+    camTheta-=dx;
+    camPhi=Math.max(0.2,Math.min(1.4,camPhi+dy));
+    updateCamera();
+  } else {
+    // hover highlight
+    const [gx,gz]=screenToGrid(e.clientX,e.clientY);
+    if(gx>=0&&gx<GRID&&gz>=0&&gz<GRID){
+      hoverMesh.position.set(gx*CELL+CELL/2,0.02,gz*CELL+CELL/2);
+      hoverMesh.visible=true;
+    } else { hoverMesh.visible=false; }
+  }
+  lastMX=e.clientX; lastMY=e.clientY;
+});
+renderer.domElement.addEventListener('mouseup',()=>{ isDragging=false; });
+renderer.domElement.addEventListener('mouseleave',()=>{ isDragging=false; hoverMesh.visible=false; });
+renderer.domElement.addEventListener('wheel',e=>{
+  camRadius=Math.max(15,Math.min(100,camRadius+e.deltaY*0.05));
+  updateCamera();
+},{passive:true});
+renderer.domElement.addEventListener('contextmenu',e=>e.preventDefault());
+
+// Touch pan
+let lastTouch=null;
+renderer.domElement.addEventListener('touchstart',e=>{
+  if(e.touches.length===1){
+    lastTouch={x:e.touches[0].clientX,y:e.touches[0].clientY};
+    const [gx,gz]=screenToGrid(e.touches[0].clientX,e.touches[0].clientY);
+    if(selectedTool==='bulldoze') bulldoze(gx,gz);
+    else place(gx,gz,selectedTool);
+  }
+},{passive:true});
+renderer.domElement.addEventListener('touchmove',e=>{
+  if(e.touches.length===1&&lastTouch){
+    const dx=(e.touches[0].clientX-lastTouch.x)*0.005;
+    const dy=(e.touches[0].clientY-lastTouch.y)*0.005;
+    camTheta-=dx; camPhi=Math.max(0.2,Math.min(1.4,camPhi+dy));
+    updateCamera();
+    lastTouch={x:e.touches[0].clientX,y:e.touches[0].clientY};
+  }
+},{passive:true});
+
+// Keyboard pan
+window.addEventListener('keydown',e=>{
+  const step=2;
+  if(e.key==='ArrowLeft' ||e.key==='a') camTarget.x-=step;
+  if(e.key==='ArrowRight'||e.key==='d') camTarget.x+=step;
+  if(e.key==='ArrowUp'   ||e.key==='w') camTarget.z-=step;
+  if(e.key==='ArrowDown' ||e.key==='s') camTarget.z+=step;
+  camTarget.x=Math.max(0,Math.min(GRID*CELL,camTarget.x));
+  camTarget.z=Math.max(0,Math.min(GRID*CELL,camTarget.z));
+  updateCamera();
+});
+
+// ═══════════════════════════════════════════════════════════
+//  DAY CYCLE & ECONOMY
+// ═══════════════════════════════════════════════════════════
+function tickDay(){
+  day++;
+  // Income from buildings
+  let income=0;
+  for(let r=0;r<GRID;r++) for(let c=0;c<GRID;c++){
+    const t=cityGrid[r][c];
+    if(t) income+=INCOME[t.type]||0;
+  }
+  // Population bonus
+  income+=Math.floor(population*0.5);
+  money+=income;
+  updateHUD();
+  // Flash income
+  if(income>0) flashMsg(`Day ${day}: +$${income.toLocaleString()} income 💰`);
+}
+
+// ═══════════════════════════════════════════════════════════
+//  AMBIENT DAY/NIGHT CYCLE
+// ═══════════════════════════════════════════════════════════
+let timeOfDay=0; // 0-1
+function updateSky(t){
+  const dawn  =new THREE.Color(0xff9966);
+  const noon  =new THREE.Color(0x87ceeb);
+  const dusk  =new THREE.Color(0xff6644);
+  const night =new THREE.Color(0x0a0a2a);
+  let sky;
+  if(t<0.25)      sky=night.clone().lerp(dawn,t/0.25);
+  else if(t<0.5)  sky=dawn.clone().lerp(noon,(t-0.25)/0.25);
+  else if(t<0.75) sky=noon.clone().lerp(dusk,(t-0.5)/0.25);
+  else            sky=dusk.clone().lerp(night,(t-0.75)/0.25);
+  scene.background=sky;
+  scene.fog.color=sky;
+  // Sun intensity
+  sun.intensity=0.3+Math.sin(t*Math.PI)*1.1;
+  ambient.intensity=0.3+Math.sin(t*Math.PI)*0.5;
+  // Sun position arc
+  sun.position.set(
+    40*Math.cos(t*Math.PI*2),
+    60*Math.sin(t*Math.PI),
+    30
+  );
+}
+
+// ═══════════════════════════════════════════════════════════
+//  ANIMATE BUILDINGS
+// ═══════════════════════════════════════════════════════════
+function animateCity(T){
+  for(let r=0;r<GRID;r++) for(let c=0;c<GRID;c++){
+    const cell=cityGrid[r][c];
+    if(!cell) continue;
+    if(cell.type==='factory'){
+      // Smoke puffs rise & pulse
+      cell.mesh.children.forEach((ch,i)=>{
+        if(ch.geometry&&ch.geometry.type==='SphereGeometry'&&ch.position.y>3){
+          ch.position.y=3.9+Math.sin(T*1.5+i)*0.25;
+          ch.scale.setScalar(0.9+Math.sin(T*2+i)*0.2);
+        }
+      });
+    }
+    if(cell.type==='tower'){
+      // Antenna light blink
+      const last=cell.mesh.children[cell.mesh.children.length-1];
+      if(last) last.material.emissiveIntensity=Math.sin(T*3)>0?1.2:0;
+    }
+  }
+}
+
+// ═══════════════════════════════════════════════════════════
+//  MAIN LOOP
+// ═══════════════════════════════════════════════════════════
+let last=performance.now();
+function loop(now){
+  requestAnimationFrame(loop);
+  const dt=Math.min((now-last)/1000,0.05)*gameSpeed; last=now;
+
+  // Day timer (10 real seconds per day)
+  dayTimer+=dt;
+  if(dayTimer>=10){ dayTimer=0; tickDay(); }
+
+  // Time of day
+  timeOfDay=(timeOfDay+dt/60)%1;
+  updateSky(timeOfDay);
+
+  // Hover pulse
+  hoverMesh.material.opacity=0.15+Math.sin(now*0.004)*0.1;
+
+  // Animate buildings
+  animateCity(now*0.001);
+
+  renderer.render(scene,camera);
+}
+
+updateHUD();
+loop(performance.now());
+</script>
+</body>
+</html>
