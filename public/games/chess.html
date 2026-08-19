@@ -97,9 +97,12 @@ h1{font-size:22px;font-weight:800;letter-spacing:2px;margin:8px 0 4px;background
 #diff-slider{width:100%;accent-color:var(--accent);cursor:pointer;}
 .diff-marks{display:flex;justify-content:space-between;font-size:9px;color:rgba(255,255,255,0.3);}
 
-/* Captured */
-#captured-white,#captured-black{font-size:18px;line-height:1.4;min-height:24px;letter-spacing:1px;}
-#material-score{font-size:12px;color:rgba(255,255,255,0.5);margin-top:4px;}
+/* Captured (shown in each player bar, chess.com style) */
+.cap-row{display:flex;flex-wrap:wrap;align-items:center;gap:0;margin-top:3px;min-height:16px;font-size:15px;line-height:1;}
+.cap-pc.white{color:#f0f0f0;text-shadow:0 0 2px rgba(0,0,0,0.7);}
+.cap-pc.black{color:#1c1c1c;text-shadow:0 0 2px rgba(255,255,255,0.85);}
+.cap-adv{font-size:11px;font-weight:700;color:#a8ff78;margin-left:5px;}
+.side-btn.active{border-color:#e94560!important;color:#fff!important;background:rgba(233,69,96,0.18)!important;}
 
 /* Move history */
 #move-list{max-height:240px;overflow-y:auto;font-size:12px;line-height:1.8;scrollbar-width:thin;scrollbar-color:rgba(255,255,255,0.2) transparent;}
@@ -164,9 +167,10 @@ h1{font-size:22px;font-weight:800;letter-spacing:2px;margin:8px 0 4px;background
   <div id="board-wrap">
     <div id="player-top" class="player-bar" style="width:100%;">
       <div class="player-avatar">🤖</div>
-      <div>
+      <div style="flex:1;min-width:0;">
         <div class="player-name" id="bot-name">Stockfish</div>
         <div class="player-rating" id="bot-rating">Level 20 • ~3500 ELO</div>
+        <div class="cap-row" id="cap-top"></div>
       </div>
       <div class="player-timer" id="timer-top">—</div>
     </div>
@@ -179,9 +183,10 @@ h1{font-size:22px;font-weight:800;letter-spacing:2px;margin:8px 0 4px;background
 
     <div id="player-bottom" class="player-bar" style="width:100%;">
       <div class="player-avatar">👤</div>
-      <div>
+      <div style="flex:1;min-width:0;">
         <div class="player-name">You</div>
-        <div class="player-rating">Playing as White</div>
+        <div class="player-rating" id="you-rating">Playing as White</div>
+        <div class="cap-row" id="cap-bottom"></div>
       </div>
       <div class="player-timer" id="timer-bottom">—</div>
     </div>
@@ -210,12 +215,15 @@ h1{font-size:22px;font-weight:800;letter-spacing:2px;margin:8px 0 4px;background
       </div>
     </div>
 
-    <!-- Captured pieces -->
+    <!-- Play as -->
     <div class="card">
-      <h3>Captured</h3>
-      <div id="captured-black"></div>
-      <div id="captured-white"></div>
-      <div id="material-score"></div>
+      <h3>Play As</h3>
+      <div class="btn-row" id="side-row">
+        <button class="btn btn-secondary side-btn active" data-side="w">♔ White</button>
+        <button class="btn btn-secondary side-btn" data-side="b">♚ Black</button>
+        <button class="btn btn-secondary side-btn" data-side="r">🎲 Random</button>
+      </div>
+      <div style="font-size:10px;color:rgba(255,255,255,0.35);margin-top:6px;">Applies on your next New Game.</div>
     </div>
 
     <!-- Buttons -->
@@ -365,6 +373,9 @@ let lastMove = null;       // {from, to}
 let difficulty = 20;
 let gameOver = false;
 let hintSquare = null;
+let hintToSquare = null;
+let playerColor = 'w';   // side the human plays ('w' or 'b')
+let sideChoice = 'w';    // chosen side for the next New Game ('w' | 'b' | 'r')
 let pendingPromo = null;   // {from, to}
 let moveHistory = [];      // san strings
 let capturedByWhite = [];
@@ -448,7 +459,7 @@ function buildBoard(){
 function applyHighlights(){
   // Clear
   document.querySelectorAll('.sq').forEach(sq=>{
-    sq.classList.remove('selected','legal','has-piece','last-move','in-check','hint-sq');
+    sq.classList.remove('selected','legal','has-piece','last-move','in-check','hint-from','hint-to');
   });
 
   // Last move
@@ -483,10 +494,10 @@ function applyHighlights(){
     }
   }
 
-  // Hint
+  // Hint (highlights both the piece to move and where it goes)
   if(hintSquare){
-    getSqEl(hintSquare)?.classList.add('hint-sq');
-    getSqEl(hintSquare).style.background = '#00ff88';
+    getSqEl(hintSquare)?.classList.add('hint-from');
+    if(hintToSquare) getSqEl(hintToSquare)?.classList.add('hint-to');
   }
 }
 
@@ -499,7 +510,7 @@ function getSqEl(sqName){
 // ═══════════════════════════════════════════════════════════════
 boardEl.addEventListener('click', e=>{
   if(gameOver) return;
-  if(chess.turn() !== 'w') return; // player is white
+  if(chess.turn() !== playerColor) return; // only move on your turn
   const sqEl = e.target.closest('.sq');
   if(!sqEl) return;
   const sq = sqEl.dataset.sq;
@@ -511,7 +522,7 @@ let dragFrom = null;
 boardEl.addEventListener('dragstart', e=>{
   const piece = e.target.closest('.piece');
   if(!piece) return;
-  if(chess.turn()!=='w'||gameOver) return;
+  if(chess.turn()!==playerColor||gameOver) return;
   dragFrom = piece.dataset.sq;
   piece.classList.add('dragging');
   handleSquareClick(dragFrom);
@@ -532,7 +543,7 @@ boardEl.addEventListener('dragend', e=>{
 // Touch support
 let touchFrom = null;
 boardEl.addEventListener('touchstart', e=>{
-  if(chess.turn()!=='w'||gameOver) return;
+  if(chess.turn()!==playerColor||gameOver) return;
   const sqEl = e.target.closest('.sq');
   if(!sqEl) return;
   touchFrom = sqEl.dataset.sq;
@@ -549,7 +560,7 @@ boardEl.addEventListener('touchend', e=>{
 },{passive:true});
 
 function handleSquareClick(sq){
-  hintSquare = null;
+  hintSquare = null; hintToSquare = null;
   const piece = chess.get(sq);
 
   // If already selected and clicking a legal target
@@ -566,7 +577,7 @@ function handleSquareClick(sq){
       return;
     }
     // Clicking own piece — reselect
-    if(piece && piece.color==='w'){
+    if(piece && piece.color===playerColor){
       selected = sq;
       legalMoves = chess.moves({square:sq, verbose:true});
       applyHighlights();
@@ -579,7 +590,7 @@ function handleSquareClick(sq){
   }
 
   // Select own piece
-  if(piece && piece.color==='w'){
+  if(piece && piece.color===playerColor){
     selected = sq;
     legalMoves = chess.moves({square:sq, verbose:true});
     applyHighlights();
@@ -594,7 +605,7 @@ function doMove(moveObj){
   if(!result) return;
 
   lastMove = {from:result.from, to:result.to};
-  selected = null; legalMoves = []; hintSquare = null;
+  selected = null; legalMoves = []; hintSquare = null; hintToSquare = null;
 
   // Track captured
   if(result.captured){
@@ -614,7 +625,7 @@ function doMove(moveObj){
   updateControlsState();
   checkGameOver();
 
-  if(!gameOver && chess.turn()==='b'){
+  if(!gameOver && chess.turn()!==playerColor){
     setTimeout(doBotMove, 300);
   }
 }
@@ -698,8 +709,8 @@ function checkGameOver(){
     gameOver = true;
     let emoji='🏆', result='', reason='';
     if(chess.in_checkmate()){
-      const winner = chess.turn()==='b'?'White':'Black';
-      if(winner==='White'){ emoji='🏆'; result='You Win!'; }
+      const youGotMated = chess.turn()===playerColor;
+      if(!youGotMated){ emoji='🏆'; result='You Win!'; }
       else { emoji='💀'; result='Stockfish Wins!'; }
       reason = 'by Checkmate';
     } else if(chess.in_stalemate()){
@@ -723,19 +734,19 @@ function checkGameOver(){
 //  CAPTURED PIECES & MATERIAL
 // ═══════════════════════════════════════════════════════════════
 function updateCaptured(){
-  const pieceChar = (color,type)=>PIECES[color+type.toUpperCase()];
-  const wCap = capturedByWhite.map(p=>pieceChar('b',p)).join('');
-  const bCap = capturedByBlack.map(p=>pieceChar('w',p)).join('');
-  document.getElementById('captured-black').textContent = wCap || '—';
-  document.getElementById('captured-white').textContent = bCap || '—';
-
-  const wMat = capturedByWhite.reduce((s,p)=>s+(PIECE_VALUES[p]||0),0);
-  const bMat = capturedByBlack.reduce((s,p)=>s+(PIECE_VALUES[p]||0),0);
-  const diff = wMat - bMat;
-  const matEl = document.getElementById('material-score');
-  if(diff>0) matEl.textContent = `+${diff} for White`;
-  else if(diff<0) matEl.textContent = `+${Math.abs(diff)} for Black`;
-  else matEl.textContent = 'Material equal';
+  // You captured the opponent's pieces; the engine captured yours (chess.com layout)
+  const youCaptured = playerColor==='w' ? capturedByWhite : capturedByBlack;
+  const botCaptured = playerColor==='w' ? capturedByBlack : capturedByWhite;
+  const youGlyphClass = playerColor==='w' ? 'black' : 'white';
+  const botGlyphClass = playerColor==='w' ? 'white' : 'black';
+  const render = (arr,cls)=> arr.map(p=>`<span class="cap-pc ${cls}">${SOLID[p.toUpperCase()]}</span>`).join('');
+  const youVal = youCaptured.reduce((s,p)=>s+(PIECE_VALUES[p]||0),0);
+  const botVal = botCaptured.reduce((s,p)=>s+(PIECE_VALUES[p]||0),0);
+  const diff = youVal - botVal;
+  const capBottom = document.getElementById('cap-bottom');
+  const capTop = document.getElementById('cap-top');
+  if(capBottom) capBottom.innerHTML = render(youCaptured,youGlyphClass) + (diff>0?`<span class="cap-adv">+${diff}</span>`:'');
+  if(capTop) capTop.innerHTML = render(botCaptured,botGlyphClass) + (diff<0?`<span class="cap-adv">+${Math.abs(diff)}</span>`:'');
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -776,8 +787,8 @@ function setStatus(msg, thinking=false){
   dot.style.display = thinking ? 'inline-block' : 'none';
   st.appendChild(dot);
   // Active player highlight
-  document.getElementById('player-top').classList.toggle('active-player', chess.turn()==='b' && !gameOver);
-  document.getElementById('player-bottom').classList.toggle('active-player', chess.turn()==='w' && !gameOver);
+  document.getElementById('player-top').classList.toggle('active-player', chess.turn()!==playerColor && !gameOver);
+  document.getElementById('player-bottom').classList.toggle('active-player', chess.turn()===playerColor && !gameOver);
   updateControlsState();
 }
 
@@ -788,7 +799,7 @@ function updateControlsState(){
   const hint=document.getElementById('hint-btn');
   const lock=document.getElementById('lock-note');
   const inGame=moveHistory.length>0 && !gameOver;
-  const thinking=chess.turn()==='b' && !gameOver;
+  const thinking=chess.turn()!==playerColor && !gameOver;
   if(slider) slider.disabled=inGame;
   if(undo) undo.disabled=thinking||gameOver||moveHistory.length<2;
   if(hint) hint.disabled=thinking||gameOver;
@@ -820,24 +831,26 @@ document.getElementById('flip-btn').addEventListener('click',()=>{
   flipped=!flipped; buildBoard();
 });
 document.getElementById('undo-btn').addEventListener('click',()=>{
-  if(gameOver||chess.turn()==='b') return;
-  // Undo two moves (player + bot)
+  if(gameOver||chess.turn()!==playerColor) return;
+  // Undo two plies (your move + the engine's reply)
   chess.undo(); chess.undo();
   if(moveHistory.length>=2){ moveHistory.pop(); moveHistory.pop(); }
   if(capturedByWhite.length) capturedByWhite.pop();
   if(capturedByBlack.length) capturedByBlack.pop();
-  lastMove=null; selected=null; legalMoves=[];
+  lastMove=null; selected=null; legalMoves=[]; hintSquare=null; hintToSquare=null;
   buildBoard(); updateCaptured(); updateMoveList();
-  setStatus('Your turn');
+  if(!gameOver && chess.turn()!==playerColor){ setStatus('Stockfish thinking…',true); setTimeout(doBotMove,300); }
+  else setStatus('Your turn');
 });
 document.getElementById('hint-btn').addEventListener('click',()=>{
-  if(gameOver||chess.turn()!=='w') return;
+  if(gameOver||chess.turn()!==playerColor) return;
   setStatus('Getting hint…', true);
   askStockfish(chess.fen(), function(move){
     if(move){
       hintSquare = move.slice(0,2);
+      hintToSquare = move.slice(2,4);
       applyHighlights();
-      setStatus('Hint: move from '+move.slice(0,2).toUpperCase());
+      setStatus('Hint: '+hintSquare.toUpperCase()+' → '+hintToSquare.toUpperCase());
     } else setStatus('Your turn');
   }, {movetime:700, skill:20});
 });
@@ -853,21 +866,37 @@ document.getElementById('copy-pgn-btn').addEventListener('click',()=>{
 // ═══════════════════════════════════════════════════════════════
 function newGame(){
   chess = new Chess();
+  // resolve the chosen side (Random picks 50/50)
+  playerColor = sideChoice==='r' ? (Math.random()<0.5?'w':'b') : sideChoice;
+  flipped = (playerColor==='b');
   gameOver=false; selected=null; legalMoves=[]; lastMove=null;
-  hintSquare=null; pendingPromo=null; moveHistory=[];
+  hintSquare=null; hintToSquare=null; pendingPromo=null; moveHistory=[];
   capturedByWhite=[]; capturedByBlack=[];
   lastEval=''; updateEval();
+  const yr=document.getElementById('you-rating');
+  if(yr) yr.textContent = 'Playing as ' + (playerColor==='w'?'White':'Black');
   buildBoard(); updateCaptured(); updateMoveList();
-  setStatus('Your turn');
+  setStatus(playerColor==='w' ? 'Your turn' : 'Stockfish to move…');
   document.getElementById('gameover-modal').classList.remove('show');
+  // if you chose Black, the engine (White) opens
+  if(playerColor==='b') setTimeout(doBotMove, 400);
 }
 
 // ═══════════════════════════════════════════════════════════════
 //  HINT SQUARE STYLE
 // ═══════════════════════════════════════════════════════════════
 const hintStyle = document.createElement('style');
-hintStyle.textContent=`.hint-sq{background:#00ff88!important;box-shadow:0 0 12px #00ff88;}`;
+hintStyle.textContent=`.sq.hint-from{box-shadow:inset 0 0 0 4px #00e676;} .sq.hint-to{box-shadow:inset 0 0 0 4px #00e676;} .sq.hint-to::after{content:'';position:absolute;left:50%;top:50%;width:30%;height:30%;transform:translate(-50%,-50%);border-radius:50%;background:#00e676;z-index:3;}`;
 document.head.appendChild(hintStyle);
+
+// Play As side selection (applies on the next New Game)
+document.querySelectorAll('.side-btn').forEach(btn=>{
+  btn.addEventListener('click',()=>{
+    document.querySelectorAll('.side-btn').forEach(b=>b.classList.remove('active'));
+    btn.classList.add('active');
+    sideChoice = btn.dataset.side;
+  });
+});
 
 // ═══════════════════════════════════════════════════════════════
 //  RESIZE
