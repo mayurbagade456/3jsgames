@@ -93,6 +93,17 @@ export const BUILTIN_GAMES: Game[] = [
     src: "/games/bubble_shooter.html",
     builtin: true,
   },
+  {
+    id: "chess",
+    title: "Chess vs Stockfish",
+    description:
+      "Play chess against the Stockfish engine. Pick your level from Beginner all the way up to Magnus.",
+    category: "Board",
+    emoji: "♟️",
+    tone: "sky",
+    src: "/games/chess.html",
+    builtin: true,
+  },
 ];
 
 export const TONE_CLASSES: Record<
