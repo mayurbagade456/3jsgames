@@ -104,6 +104,17 @@ export const BUILTIN_GAMES: Game[] = [
     src: "/games/chess.html",
     builtin: true,
   },
+  {
+    id: "neon-2048",
+    title: "2048 Neon",
+    description:
+      "Slide and merge the numbered tiles to build your way up to 2048 — and beyond. A chill number puzzle.",
+    category: "Puzzle",
+    emoji: "🔢",
+    tone: "mint",
+    src: "/games/2048.html",
+    builtin: true,
+  },
 ];
 
 export const TONE_CLASSES: Record<

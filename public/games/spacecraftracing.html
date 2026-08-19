@@ -39,6 +39,14 @@
   #nitro-bg{width:140px;height:8px;background:rgba(255,255,255,0.08);border-radius:4px;overflow:hidden;}
   #nitro-bar{height:100%;width:0%;background:linear-gradient(90deg,#00ffa0,#00c8ff);border-radius:4px;transition:width 0.1s;}
   #ctrl{position:fixed;bottom:58px;left:50%;transform:translateX(-50%);color:rgba(255,255,255,0.25);font-size:12px;pointer-events:none;letter-spacing:1px;}
+  /* On-screen touch controls — only shown on touch devices */
+  #touch-controls{position:fixed;left:0;right:0;bottom:0;display:none;justify-content:space-between;align-items:flex-end;padding:0 20px 24px;pointer-events:none;z-index:20;}
+  .tc-steer{display:flex;gap:14px;}
+  .tc-btn{pointer-events:all;width:66px;height:66px;border-radius:50%;border:1px solid rgba(255,255,255,0.2);background:rgba(0,0,0,0.42);color:#fff;font-size:26px;display:flex;align-items:center;justify-content:center;user-select:none;-webkit-user-select:none;-webkit-tap-highlight-color:transparent;touch-action:none;backdrop-filter:blur(6px);transition:transform .08s,background .1s;}
+  .tc-btn:active{transform:scale(0.92);background:rgba(0,0,0,0.68);}
+  .tc-nitro{width:82px;height:82px;font-size:34px;border-color:rgba(0,255,160,0.5);color:#00ffa0;background:rgba(0,255,160,0.14);}
+  .tc-nitro:active{background:rgba(0,255,160,0.32);}
+  @media (pointer:coarse){ #touch-controls{display:flex;} #ctrl{display:none;} }
   .screen{position:fixed;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;backdrop-filter:blur(6px);transition:opacity .35s;}
   .screen.hidden{opacity:0;pointer-events:none;}
   #start-screen{background:rgba(4,4,20,0.85);}
@@ -72,6 +80,13 @@
 <div id="ctrl">← → / A D to steer  |  Space / ↑ for Nitro boost</div>
 <div id="turbo-flash"></div>
 <div id="crash-flash"></div>
+<div id="touch-controls">
+  <div class="tc-steer">
+    <button class="tc-btn" id="tc-left" aria-label="Steer left">◀</button>
+    <button class="tc-btn" id="tc-right" aria-label="Steer right">▶</button>
+  </div>
+  <button class="tc-btn tc-nitro" id="tc-nitro" aria-label="Nitro boost">⚡</button>
+</div>
 <div class="screen" id="start-screen">
   <h1>🏎 Neon Racer</h1>
   <div class="tagline">Dodge traffic. Collect nitro. Go faster.</div>
@@ -173,6 +188,22 @@ window.addEventListener('touchstart',e=>{sx=e.touches[0].clientX;sy=e.touches[0]
 window.addEventListener('touchend',e=>{if(state!=='playing')return;const dx=e.changedTouches[0].clientX-sx;if(Math.abs(dx)>30){if(dx<0)ml(-1);else ml(1);}},{passive:true});
 function ml(d){const n=currentLane+d;if(n<0||n>3)return;currentLane=n;targetX=LANES[currentLane];}
 
+// On-screen touch controls (visible on touch devices) — steer taps + hold-to-boost
+let touchBoost=false;
+(function(){
+  const L=document.getElementById('tc-left'),R=document.getElementById('tc-right'),N=document.getElementById('tc-nitro');
+  if(!L) return;
+  const steer=d=>e=>{ e.preventDefault(); if(state==='playing') ml(d); };
+  L.addEventListener('pointerdown',steer(-1));
+  R.addEventListener('pointerdown',steer(1));
+  const on=e=>{ e.preventDefault(); touchBoost=true; };
+  const off=e=>{ if(e&&e.cancelable) e.preventDefault(); touchBoost=false; };
+  N.addEventListener('pointerdown',on);
+  N.addEventListener('pointerup',off);
+  N.addEventListener('pointercancel',off);
+  N.addEventListener('pointerleave',off);
+})();
+
 const $score=document.getElementById('score'),$best=document.getElementById('best');
 const $speedVal=document.getElementById('speed-val'),$hearts=document.getElementById('hearts');
 const $nitroBar=document.getElementById('nitro-bar');
@@ -221,7 +252,7 @@ function loop(now){
   const dt=Math.min((now-last)/1000,0.05);last=now;
   if(state!=='playing'){renderer.render(scene,camera);return;}
   T+=dt;invincible=Math.max(0,invincible-dt);
-  boosting=(keys['Space']||keys['ArrowUp']||keys['KeyW'])&&nitroAmt>0;
+  boosting=(keys['Space']||keys['ArrowUp']||keys['KeyW']||touchBoost)&&nitroAmt>0;
   if(boosting)nitroAmt=Math.max(0,nitroAmt-NITRO_DRAIN*dt);
   else nitroAmt=Math.min(NITRO_MAX,nitroAmt+NITRO_REGEN*dt);
   const tSpd=boosting?NITRO_SPD:Math.min(MAX_SPD,BASE_SPD+score*0.004+T*0.06);
