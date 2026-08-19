@@ -254,7 +254,7 @@ function AdminPanel({ onLock }: { onLock: () => void }) {
 
         {/* ---- add / edit ---- */}
         <TabsContent value="add">
-          <div className="grid gap-6 lg:grid-cols-[1.15fr_.85fr]">
+          <div className="grid min-w-0 grid-cols-1 gap-6 lg:grid-cols-[1.15fr_.85fr]">
             <Card className="p-6">
               <div className="space-y-5">
                 <div className="space-y-2">
@@ -296,7 +296,7 @@ function AdminPanel({ onLock }: { onLock: () => void }) {
                   </p>
                 </div>
 
-                <div className="grid gap-5 sm:grid-cols-2">
+                <div className="grid grid-cols-1 gap-5 sm:grid-cols-2">
                   <div className="space-y-2">
                     <Label htmlFor="cat">Category</Label>
                     <Input

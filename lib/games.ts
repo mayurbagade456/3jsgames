@@ -82,6 +82,17 @@ export const BUILTIN_GAMES: Game[] = [
     src: "/games/tower_defence.html",
     builtin: true,
   },
+  {
+    id: "bubble-shooter",
+    title: "Bubble Shooter",
+    description:
+      "Aim, bounce and pop clusters of 3+ matching bubbles before they pile to the bottom.",
+    category: "Puzzle",
+    emoji: "🫧",
+    tone: "butter",
+    src: "/games/bubble_shooter.html",
+    builtin: true,
+  },
 ];
 
 export const TONE_CLASSES: Record<
