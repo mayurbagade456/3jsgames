@@ -76,6 +76,8 @@ h1{font-size:22px;font-weight:800;letter-spacing:2px;margin:8px 0 4px;background
 }
 .piece:active{cursor:grabbing;transform:scale(1.15);}
 .piece.dragging{opacity:0.4;}
+.piece.white{color:#f7f7f7;text-shadow:0 1px 1px rgba(0,0,0,0.55),0 0 3px rgba(0,0,0,0.85);}
+.piece.black{color:#141414;text-shadow:0 1px 1px rgba(255,255,255,0.3),0 0 3px rgba(255,255,255,0.35);}
 
 /* ── Side panel ── */
 #panel{display:flex;flex-direction:column;gap:12px;min-width:220px;max-width:260px;}
@@ -100,7 +102,7 @@ h1{font-size:22px;font-weight:800;letter-spacing:2px;margin:8px 0 4px;background
 #material-score{font-size:12px;color:rgba(255,255,255,0.5);margin-top:4px;}
 
 /* Move history */
-#move-list{max-height:180px;overflow-y:auto;font-size:12px;line-height:1.8;scrollbar-width:thin;scrollbar-color:rgba(255,255,255,0.2) transparent;}
+#move-list{max-height:240px;overflow-y:auto;font-size:12px;line-height:1.8;scrollbar-width:thin;scrollbar-color:rgba(255,255,255,0.2) transparent;}
 #move-list::-webkit-scrollbar{width:4px;}
 #move-list::-webkit-scrollbar-thumb{background:rgba(255,255,255,0.2);border-radius:2px;}
 .move-row{display:grid;grid-template-columns:28px 1fr 1fr;gap:4px;padding:1px 0;}
@@ -117,6 +119,8 @@ h1{font-size:22px;font-weight:800;letter-spacing:2px;margin:8px 0 4px;background
 .btn-primary:hover{transform:translateY(-1px);box-shadow:0 4px 15px rgba(233,69,96,0.4);}
 .btn-secondary{background:rgba(255,255,255,0.08);color:#ccc;border:1px solid rgba(255,255,255,0.1);}
 .btn-secondary:hover{background:rgba(255,255,255,0.15);}
+.btn:disabled,.btn[disabled]{opacity:.4;cursor:not-allowed;pointer-events:none;box-shadow:none;transform:none;}
+#diff-slider:disabled{opacity:.45;cursor:not-allowed;}
 
 /* Player labels */
 .player-bar{display:flex;align-items:center;gap:10px;padding:6px 10px;background:rgba(255,255,255,0.04);border-radius:10px;border:1px solid rgba(255,255,255,0.06);}
@@ -190,6 +194,7 @@ h1{font-size:22px;font-weight:800;letter-spacing:2px;margin:8px 0 4px;background
     <div class="card">
       <h3>Status</h3>
       <div id="status-text">Your turn <span id="thinking-dot"></span></div>
+      <div id="eval-line" style="font-size:11px;color:rgba(255,255,255,0.4);margin-top:6px;min-height:14px;"></div>
     </div>
 
     <!-- Difficulty -->
@@ -201,6 +206,7 @@ h1{font-size:22px;font-weight:800;letter-spacing:2px;margin:8px 0 4px;background
         </div>
         <input type="range" id="diff-slider" min="1" max="20" value="20"/>
         <div class="diff-marks"><span>1</span><span>5</span><span>10</span><span>15</span><span>20</span></div>
+        <div id="lock-note" style="display:none;font-size:10px;color:#e94560;margin-top:4px;">🔒 Level locks once the game starts</div>
       </div>
     </div>
 
@@ -210,12 +216,6 @@ h1{font-size:22px;font-weight:800;letter-spacing:2px;margin:8px 0 4px;background
       <div id="captured-black"></div>
       <div id="captured-white"></div>
       <div id="material-score"></div>
-    </div>
-
-    <!-- Move history -->
-    <div class="card">
-      <h3>Move History</h3>
-      <div id="move-list"></div>
     </div>
 
     <!-- Buttons -->
@@ -230,6 +230,12 @@ h1{font-size:22px;font-weight:800;letter-spacing:2px;margin:8px 0 4px;background
         <button class="btn btn-secondary" id="hint-btn">💡 Hint</button>
         <button class="btn btn-secondary" id="copy-pgn-btn">📋 Copy PGN</button>
       </div>
+    </div>
+
+    <!-- Move history (last, so new moves grow/scroll without shifting the controls) -->
+    <div class="card">
+      <h3>Move History</h3>
+      <div id="move-list"></div>
     </div>
 
   </div>
@@ -263,38 +269,74 @@ h1{font-size:22px;font-weight:800;letter-spacing:2px;margin:8px 0 4px;background
 let stockfish = null;
 let sfReady = false;
 let sfCallback = null;
+let sfTimeout = null;
+let lastEval = '';
+
+// Think time (ms) per level — capped at 2.5s so the engine never hangs
+function getMoveTime(lvl){
+  const t=[0,50,80,120,160,200,280,360,450,520,600,720,840,960,1080,1200,1450,1750,2050,2300,2500];
+  return t[Math.max(1,Math.min(lvl,20))];
+}
+// Map level 1–20 to UCI Skill Level 0–20 (how Lichess/Chess.com scale real strength)
+function skillFor(lvl){ return Math.max(0,Math.min(20,Math.round((lvl-1)*20/19))); }
 
 function initStockfish(){
-  // Use Stockfish.js from CDN via blob worker
-  const sfUrl = 'https://cdnjs.cloudflare.com/ajax/libs/stockfish.js/10.0.2/stockfish.js';
-  const workerCode = `importScripts('${sfUrl}'); var Module={};`;
-  try {
-    const blob = new Blob([`importScripts('${sfUrl}')`], {type:'application/javascript'});
-    stockfish = new Worker(URL.createObjectURL(blob));
-  } catch(e){
-    // Fallback: direct script tag approach
-    stockfish = new Worker(sfUrl);
+  const sfUrl='https://cdnjs.cloudflare.com/ajax/libs/stockfish.js/10.0.2/stockfish.js';
+  try{
+    const blob=new Blob([`importScripts('${sfUrl}')`],{type:'application/javascript'});
+    stockfish=new Worker(URL.createObjectURL(blob));
+  }catch(e){
+    try{ stockfish=new Worker(sfUrl); }catch(e2){ stockfish=null; }
   }
-  stockfish.onmessage = function(e){
-    const line = e.data;
-    if(line === 'readyok') { sfReady = true; setStatus('Your turn'); return; }
-    if(line.startsWith('bestmove') && sfCallback){
-      const parts = line.split(' ');
-      const move = parts[1];
-      if(move && move !== '(none)') sfCallback(move);
-      sfCallback = null;
+  if(!stockfish){ sfReady=true; return; }
+  stockfish.onmessage=function(e){
+    const line=typeof e.data==='string'?e.data:'';
+    if(line.indexOf('readyok')!==-1){ sfReady=true; return; }
+    // Live evaluation while thinking
+    if(line.indexOf('info')===0 && line.indexOf(' score ')!==-1){
+      const d=line.match(/ depth (\d+)/);
+      const cp=line.match(/ score cp (-?\d+)/);
+      const mate=line.match(/ score mate (-?\d+)/);
+      if(mate){ lastEval='mate in '+Math.abs(+mate[1]); updateEval(); }
+      else if(cp){
+        // score is from the side-to-move's view — flip to White's perspective
+        const w=(chess.turn()==='b'?-1:1)*(+cp[1]);
+        lastEval=`depth ${d?d[1]:'?'} · ${w>=0?'+':''}${(w/100).toFixed(1)}`;
+        updateEval();
+      }
+    }
+    if(line.indexOf('bestmove')===0){
+      if(sfTimeout){ clearTimeout(sfTimeout); sfTimeout=null; }
+      const move=line.split(' ')[1];
+      const cb=sfCallback; sfCallback=null;
+      if(cb) cb(move && move!=='(none)' ? move : null);
     }
   };
-  stockfish.onerror = function(){ sfReady=true; setStatus('Engine error – using fallback'); };
+  stockfish.onerror=function(){ sfReady=true; };
   stockfish.postMessage('uci');
+  stockfish.postMessage('setoption name Skill Level value 20');
   stockfish.postMessage('isready');
 }
 
-function askStockfish(fen, depth, callback){
+// Ask the engine for a move. Waits for readyok, and always answers within a safety window.
+function askStockfish(fen, callback, opts){
+  opts=opts||{};
   if(!stockfish){ callback(null); return; }
-  sfCallback = callback;
-  stockfish.postMessage('position fen ' + fen);
-  stockfish.postMessage('go depth ' + depth);
+  if(!sfReady){ setTimeout(()=>askStockfish(fen,callback,opts),500); return; } // retry until ready
+  const movetime=opts.movetime||getMoveTime(difficulty);
+  const skill=opts.skill!=null?opts.skill:skillFor(difficulty);
+  sfCallback=callback;
+  stockfish.postMessage('setoption name Skill Level value '+skill);
+  stockfish.postMessage('position fen '+fen);
+  stockfish.postMessage('go movetime '+movetime);
+  // Safety net: 2× think time + 1.5s, then fall back to a random move
+  if(sfTimeout) clearTimeout(sfTimeout);
+  sfTimeout=setTimeout(()=>{ sfTimeout=null; const cb=sfCallback; sfCallback=null; if(cb) cb(null); }, movetime*2+1500);
+}
+
+function updateEval(){
+  const el=document.getElementById('eval-line');
+  if(el) el.textContent = lastEval ? ('Engine: '+lastEval) : '';
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -310,6 +352,8 @@ const PIECES = {
   bK:'♚', bQ:'♛', bR:'♜', bB:'♝', bN:'♞', bP:'♟'
 };
 const PIECE_VALUES = {p:1,n:3,b:3,r:5,q:9,k:0};
+// Solid glyphs for both colours — coloured via CSS so black pieces are truly black
+const SOLID = {K:'♚',Q:'♛',R:'♜',B:'♝',N:'♞',P:'♟'};
 
 // ═══════════════════════════════════════════════════════════════
 //  BOARD STATE
@@ -389,9 +433,9 @@ function buildBoard(){
       const piece = chess.get(sqName);
       if(piece){
         const span = document.createElement('span');
-        span.className = 'piece';
+        span.className = 'piece ' + (piece.color==='w'?'white':'black');
         span.dataset.sq = sqName;
-        span.textContent = PIECES[piece.color+piece.type.toUpperCase()];
+        span.textContent = SOLID[piece.type.toUpperCase()];
         span.draggable = true;
         div.appendChild(span);
       }
@@ -567,6 +611,7 @@ function doMove(moveObj){
   buildBoard();
   updateCaptured();
   updateMoveList();
+  updateControlsState();
   checkGameOver();
 
   if(!gameOver && chess.turn()==='b'){
@@ -580,21 +625,18 @@ function doMove(moveObj){
 function doBotMove(){
   if(gameOver) return;
   setStatus('Stockfish thinking…', true);
-  const depth = getDepth(difficulty);
   const fen = chess.fen();
-
-  // Fallback: random move if Stockfish not ready
-  if(!sfReady){
-    const moves = chess.moves({verbose:true});
-    if(moves.length){
-      const m = moves[Math.floor(Math.random()*moves.length)];
-      applyBotMove(m.from+m.to+(m.promotion||''));
+  askStockfish(fen, function(moveStr){
+    if(gameOver) return;
+    if(!moveStr){
+      // engine unavailable/timed out — play a random legal move so the game never stalls
+      const moves = chess.moves({verbose:true});
+      if(moves.length){
+        const m = moves[Math.floor(Math.random()*moves.length)];
+        applyBotMove(m.from+m.to+(m.promotion||''));
+      }
+      return;
     }
-    return;
-  }
-
-  askStockfish(fen, depth, function(moveStr){
-    if(!moveStr){ setStatus('Your turn'); return; }
     applyBotMove(moveStr);
   });
 }
@@ -616,9 +658,11 @@ function applyBotMove(uciMove){
     else capturedByBlack.push('p');
   }
   moveHistory.push(result.san);
+  lastEval=''; updateEval();
   buildBoard();
   updateCaptured();
   updateMoveList();
+  updateControlsState();
   checkGameOver();
   if(!gameOver) setStatus('Your turn');
 }
@@ -734,6 +778,21 @@ function setStatus(msg, thinking=false){
   // Active player highlight
   document.getElementById('player-top').classList.toggle('active-player', chess.turn()==='b' && !gameOver);
   document.getElementById('player-bottom').classList.toggle('active-player', chess.turn()==='w' && !gameOver);
+  updateControlsState();
+}
+
+// Lock difficulty mid-game (anti-cheat) and disable actions while the engine thinks
+function updateControlsState(){
+  const slider=document.getElementById('diff-slider');
+  const undo=document.getElementById('undo-btn');
+  const hint=document.getElementById('hint-btn');
+  const lock=document.getElementById('lock-note');
+  const inGame=moveHistory.length>0 && !gameOver;
+  const thinking=chess.turn()==='b' && !gameOver;
+  if(slider) slider.disabled=inGame;
+  if(undo) undo.disabled=thinking||gameOver||moveHistory.length<2;
+  if(hint) hint.disabled=thinking||gameOver;
+  if(lock) lock.style.display=inGame?'block':'none';
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -774,13 +833,13 @@ document.getElementById('undo-btn').addEventListener('click',()=>{
 document.getElementById('hint-btn').addEventListener('click',()=>{
   if(gameOver||chess.turn()!=='w') return;
   setStatus('Getting hint…', true);
-  askStockfish(chess.fen(), Math.min(getDepth(difficulty),8), function(move){
+  askStockfish(chess.fen(), function(move){
     if(move){
       hintSquare = move.slice(0,2);
       applyHighlights();
       setStatus('Hint: move from '+move.slice(0,2).toUpperCase());
     } else setStatus('Your turn');
-  });
+  }, {movetime:700, skill:20});
 });
 document.getElementById('copy-pgn-btn').addEventListener('click',()=>{
   navigator.clipboard.writeText(chess.pgn()).then(()=>{
@@ -797,6 +856,7 @@ function newGame(){
   gameOver=false; selected=null; legalMoves=[]; lastMove=null;
   hintSquare=null; pendingPromo=null; moveHistory=[];
   capturedByWhite=[]; capturedByBlack=[];
+  lastEval=''; updateEval();
   buildBoard(); updateCaptured(); updateMoveList();
   setStatus('Your turn');
   document.getElementById('gameover-modal').classList.remove('show');
